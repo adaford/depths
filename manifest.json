@@ -1,0 +1,10 @@
+{
+  "name": "Depths",
+  "short_name": "Depths",
+  "description": "A pocket roguelike: choose your path, fight monsters, collect gear, slay the dragon.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b12",
+  "theme_color": "#0b0b12"
+}
