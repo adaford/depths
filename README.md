@@ -1,15 +1,18 @@
 # ⚔️ DEPTHS — a pocket tactics roguelike
 
 Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
-❓ events, treasure, merchants), then explore scrolling battle-maps of rooms
-and hallways: spend AP to move (green tiles show your reach), strike with your
-weapon — diagonals count, and fleeing melee provokes opportunity attacks both
-ways — cast your two equipped skills (mana + cooldowns), drink potions, spring
-traps on your foes, and loot chests mid-fight. Enemies doze in their rooms
-until you get close; tap any of them to see its full moveset, and swap gear or
-skills freely before your first action. Every foe drops gear — equip it, sell
-it, or break it into scrap and craft weapons, armor, potions, and new skills.
-Slay the dragon on floor 10. Death is permanent. Runs are short.
+❓ events, treasure, merchants), then scout each battle-map before you commit:
+scroll around the rooms and hallways, tap enemies to see their walk range and
+full movesets (red flash = they can reach you), and swap your gear and skills —
+then begin. Spend AP to move (green tiles show your reach) and strike with
+your weapon: diagonals count, fleeing melee provokes opportunity attacks both
+ways, and walls, boulders, urns, and traps all have HP and can be smashed.
+Cast your two equipped skills (mana + cooldowns), drink potions, shove foes
+into spikes, and loot chests mid-fight. Every room rolls different: big or
+cramped, bare or cluttered, and each enemy may start alert or asleep. Every
+foe drops gear — equip it, sell it, or break it into scrap and craft weapons,
+armor, potions, and new skills. Slay the dragon on floor 10. Death is
+permanent. Runs are short.
 
 **Play it:** https://adaford.github.io/depths/
 

@@ -18,7 +18,7 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
 - Immediate-mode UI: every frame redraws and re-registers tap regions via
   `U.button`/`U.hit`. No DOM elements, no event listeners per widget.
 - `G` in `js/game.js` is the whole game state and must stay JSON-serializable —
-  it is persisted verbatim to localStorage (`depths_save_3`). No class instances,
+  it is persisted verbatim to localStorage (`depths_save_4`). No class instances,
   functions, or absolute timestamps inside `G` (relative `_due` is reset on load).
   If you change the save schema incompatibly, bump the key and the `v` field.
 - All content (monsters + movesets, gear, potions, skills, craft recipes, node
@@ -26,12 +26,15 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
   Add content there, not in logic.
 - Combat is a variable-size dungeon of rooms + hallways (`js/combat.js` rules,
   `js/grid.js` BFS/pathing), viewed through a scrollable camera (drag to pan;
-  `U.dragZone` in `js/ui.js` decides tap vs drag). Everything costs AP; attack
-  ranges are chebyshev (diagonals count); leaving a melee reach provokes an
-  opportunity attack both ways; foes sleep until within AGRO range. Enemy turns
-  advance one micro-action per `tick()` beat. Dungeons must stay fully
-  connected — walls AND chests block movement, so any new blocker must be part
-  of the `connectedFloors` check.
+  `U.dragZone` in `js/ui.js` decides tap vs drag). Fights open in a `prep`
+  scout phase (look around, inspect foes, swap build) before turn 1. Everything
+  costs AP; attack ranges are chebyshev (diagonals count); leaving a melee
+  reach provokes an opportunity attack both ways; walls/obstacles/traps have hp
+  and are attackable (the map border is not); foes roll asleep per-monster
+  (`nap`) and wake within AGRO range or when hurt. Enemy turns advance one
+  micro-action per `tick()` beat. Dungeons must stay fully connected — walls,
+  chests, AND obstacles block movement, so any new blocker must be part of the
+  `connectedFloors` check.
 - Touch targets ≥ 56px. Emoji are the art style — no image assets.
 - Screens: TITLE, MAP, COMBAT, CHOICE (loot/rest/events share it), SHOP, INV,
   SKILLS, CRAFT, GAMEOVER, VICTORY.

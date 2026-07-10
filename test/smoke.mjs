@@ -10,10 +10,10 @@ import {
 } from '../js/game.js';
 import {
   tick, moveTo, attackFoe, castSkill, defend, endTurn, usePotion, throwBomb,
-  openChestAt, atkTargets, skillTargets, skillFor, skillIssue,
+  openChestAt, atkTargets, skillTargets, skillFor, skillIssue, beginBattle,
 } from '../js/combat.js';
 import { WEAPONS, OFFHANDS, ARMOR, SKILLS, RECIPES, getItem } from '../js/data.js';
-import { cheb, k, wallAt, chestAt, stepToward } from '../js/grid.js';
+import { cheb, k, wallAt, chestAt, obsAt, stepToward } from '../js/grid.js';
 
 let tt = 1000;
 const counts = { crafts: 0, sold: 0, scrapped: 0, chests: 0, skillsLearned: 0 };
@@ -41,11 +41,11 @@ function checkInvariants() {
     if (c.ap < 0) fail('negative AP');
     if (c.turn > 120) fail('combat stalled past 120 turns');
     const occ = new Set([k(c.px, c.py)]);
-    if (wallAt(c, c.px, c.py) || chestAt(c, c.px, c.py)) fail('player inside obstacle');
+    if (wallAt(c, c.px, c.py) || chestAt(c, c.px, c.py) || obsAt(c, c.px, c.py)) fail('player inside obstacle');
     for (const f of c.foes) {
       if (f.dead) continue;
       if (f.x < 0 || f.x >= c.w || f.y < 0 || f.y >= c.h) fail('foe out of bounds');
-      if (wallAt(c, f.x, f.y) || chestAt(c, f.x, f.y)) fail('foe inside obstacle');
+      if (wallAt(c, f.x, f.y) || chestAt(c, f.x, f.y) || obsAt(c, f.x, f.y)) fail('foe inside obstacle');
       if (occ.has(k(f.x, f.y))) fail('units overlap');
       occ.add(k(f.x, f.y));
     }
@@ -116,6 +116,7 @@ function manageBag() {
 // ---- combat policy ----
 function playCombat() {
   const c = G.combat;
+  if (c.phase === 'prep') { beginBattle(); return; }
   if (c.phase === 'enemy') {
     c._due = tt;
     tick(tt);

@@ -1,10 +1,12 @@
 // Tactical dungeon combat on a variable-size board (rooms + hallways, scrollable).
+// Fights open in a SCOUT phase: pan the map, inspect foes, swap your build, then begin.
 // Everything costs AP: moving (1/tile), attacking (weapon ap), skills (ap+mp+cooldown),
 // potions (1), opening chests (1), defending (1, once per turn).
 // Attacks reach diagonals (chebyshev range); stepping out of an enemy's reach
-// provokes an opportunity attack — in both directions.
-// Foes nap in their rooms until you come within AGRO range or hurt them, then act
-// one micro-action per timed beat so their turn reads clearly.
+// provokes an opportunity attack — in both directions. Walls, obstacles, and traps
+// have hp and can be smashed with weapon attacks (the map border cannot).
+// Some foes roll asleep at battle start (per-monster `nap` chance) and wake when
+// you come within AGRO range or hurt them; the rest come at you from turn one.
 // All combat state lives in G.combat (JSON-safe). FX is a render-side queue drained by screens.js.
 import {
   G, save, goto, clearSave, afterCombatVictory, getPrimary, getSecondary, getArmor,
@@ -16,6 +18,8 @@ import * as Gr from './grid.js';
 
 export const FX = [];
 export const AGRO = 6; // chebyshev distance at which a sleeping foe wakes
+const WALL_HP = 12;
+const OBS_TYPES = [['🪨', 10], ['🪵', 6], ['⚱️', 4]];
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 const C = () => G.combat;
 
@@ -29,14 +33,31 @@ function log(s) {
 const POOLS = { easy: [], med: [], elite: [], minion: [], boss: [] };
 for (const [id, m] of Object.entries(MONSTERS)) POOLS[m.pool].push(id);
 
+// Wide variance on purpose: counts, mixes, and (via `nap`) how many start asleep.
 function rollFoes(r, kind, row) {
-  if (kind === 'boss') return ['m_dragon', 'm_whelp', 'm_whelp', 'm_whelp'];
+  if (kind === 'boss') {
+    const ids = ['m_dragon'];
+    for (let i = 0, n = ri(r, 2, 3); i < n; i++) ids.push('m_whelp');
+    return ids;
+  }
   const ids = [];
   const easy = () => pick(r, POOLS.easy), med = () => pick(r, POOLS.med);
-  if (row <= 1) ids.push(easy(), easy());
-  else if (row <= 3) { ids.push(easy(), easy()); if (chance(r, 0.5)) ids.push(easy()); }
-  else if (row <= 5) { ids.push(med(), chance(r, 0.5) ? med() : easy()); if (chance(r, 0.5)) ids.push(easy()); if (chance(r, 0.2)) ids.push(easy()); }
-  else { ids.push(med(), med()); if (chance(r, 0.55)) ids.push(med()); if (chance(r, 0.3)) ids.push(easy()); if (chance(r, 0.35)) ids[0] = pick(r, POOLS.elite); }
+  if (row <= 1) {
+    const n = chance(r, 0.2) ? 1 : chance(r, 0.7) ? 2 : 3;
+    for (let i = 0; i < n; i++) ids.push(easy());
+  } else if (row <= 3) {
+    const n = ri(r, 2, chance(r, 0.25) ? 4 : 3);
+    for (let i = 0; i < n; i++) ids.push(easy());
+  } else if (row <= 5) {
+    const n = ri(r, 2, 4);
+    ids.push(med());
+    for (let i = 1; i < n; i++) ids.push(chance(r, 0.55) ? easy() : med());
+  } else {
+    const n = ri(r, 2, 5);
+    ids.push(med(), med());
+    for (let i = 2; i < n; i++) ids.push(chance(r, 0.6) ? med() : easy());
+    if (chance(r, 0.35)) ids[0] = pick(r, POOLS.elite);
+  }
   if (kind === 'ambush') ids.push(row <= 3 ? easy() : med());
   return ids.slice(0, 5);
 }
@@ -51,7 +72,7 @@ function rollDropGear(r, tier) {
   return pick(r, pool).id;
 }
 
-// ---------- dungeon generation (rooms + hallways) ----------
+// ---------- dungeon generation (rooms + hallways, heavy variance) ----------
 function connectedFloors(w, h, blockedIdx) {
   const blocked = new Set(blockedIdx);
   let start = -1;
@@ -72,21 +93,21 @@ function connectedFloors(w, h, blockedIdx) {
 }
 
 function genDungeon(r, kind) {
-  const w = kind === 'boss' ? 12 : ri(r, 9, 12);
-  const h = kind === 'boss' ? 12 : ri(r, 10, 13);
+  const w = kind === 'boss' ? ri(r, 11, 14) : ri(r, 8, 14);
+  const h = kind === 'boss' ? ri(r, 11, 14) : ri(r, 9, 14);
   const carved = new Set();
   const rooms = [];
-  const nRooms = kind === 'boss' ? 3 : ri(r, 3, 4);
+  const nRooms = kind === 'boss' ? ri(r, 3, 4) : ri(r, 2, 5);
   for (let n = 0; n < nRooms; n++) {
     for (let t = 0; t < 40; t++) {
-      const rw = ri(r, 3, kind === 'boss' ? 6 : 5), rh = ri(r, 3, kind === 'boss' ? 6 : 5);
+      const rw = ri(r, 3, Math.min(7, w - 1)), rh = ri(r, 3, Math.min(7, h - 1));
       const rx = ri(r, 0, w - rw), ry = ri(r, 0, h - rh);
       if (rooms.some(q => rx < q.x + q.w + 1 && q.x < rx + rw + 1 && ry < q.y + q.h + 1 && q.y < ry + rh + 1)) continue;
       rooms.push({ x: rx, y: ry, w: rw, h: rh });
       break;
     }
   }
-  if (!rooms.length) rooms.push({ x: 2, y: 2, w: 5, h: 5 });
+  if (!rooms.length) rooms.push({ x: 1, y: 1, w: Math.min(6, w - 2), h: Math.min(6, h - 2) });
   for (const rm of rooms) {
     for (let y = rm.y; y < rm.y + rm.h; y++) for (let x = rm.x; x < rm.x + rm.w; x++) carved.add(y * w + x);
   }
@@ -103,15 +124,15 @@ function genDungeon(r, kind) {
       for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) carved.add(y2 * w + x);
     }
   }
-  const walls = [];
-  for (let i = 0; i < w * h; i++) if (!carved.has(i)) walls.push(i);
-  return { w, h, walls, rooms, inRoom };
+  const wallIdx = [];
+  for (let i = 0; i < w * h; i++) if (!carved.has(i)) wallIdx.push(i);
+  return { w, h, wallIdx, rooms, inRoom };
 }
 
 export function startCombat(kind, row) {
   const r = G.rng;
   const d = genDungeon(r, kind);
-  const used = new Set(d.walls.map(i => Gr.k(i % d.w, (i / d.w) | 0)));
+  const used = new Set(d.wallIdx.map(i => Gr.k(i % d.w, (i / d.w) | 0)));
   const takeFrom = (cells) => {
     const free = cells.filter(([x, y]) => !used.has(Gr.k(x, y)));
     if (!free.length) return null;
@@ -125,7 +146,7 @@ export function startCombat(kind, row) {
     return out;
   };
   const allFloor = [];
-  for (let y = 0; y < d.h; y++) for (let x = 0; x < d.w; x++) if (!d.walls.includes(y * d.w + x)) allFloor.push([x, y]);
+  for (let y = 0; y < d.h; y++) for (let x = 0; x < d.w; x++) if (!d.wallIdx.includes(y * d.w + x)) allFloor.push([x, y]);
   const hallCells = allFloor.filter(([x, y]) => !d.inRoom(x, y));
 
   const pxy = takeFrom(roomCells(d.rooms[0])) || takeFrom(allFloor);
@@ -137,44 +158,73 @@ export function startCombat(kind, row) {
   rollFoes(r, kind, row).forEach((mid, i) => {
     const rm = foeRooms.length ? foeRooms[i % foeRooms.length] : d.rooms[0];
     const p = takeFrom(farFrom(roomCells(rm), 4)) || takeFrom(farFrom(anyRoomCells, 4))
-      || takeFrom(farFrom(allFloor, 5)) || takeFrom(allFloor);
+      || takeFrom(farFrom(allFloor, 3)) || takeFrom(allFloor);
     if (!p) return;
     const m = MONSTERS[mid];
-    foes.push({ mid, x: p.x, y: p.y, hp: m.hp, maxHp: m.hp, block: 0, buff: 0, stun: 0, psn: 0, psnT: 0, awake: false, dead: false });
+    foes.push({
+      mid, x: p.x, y: p.y, hp: m.hp, maxHp: m.hp, block: 0, buff: 0, stun: 0, psn: 0, psnT: 0,
+      awake: !(m.nap && chance(r, m.nap)), dead: false,
+    });
   });
 
+  // destructibles + furniture, from "bare hallway" to "cluttered vault"
+  const walls = d.wallIdx.map(i => ({ x: i % d.w, y: (i / d.w) | 0, hp: WALL_HP, mhp: WALL_HP }));
+  const obs = [];
+  const chests = [];
+  const blockedIdx = () => [
+    ...walls.map(q => q.y * d.w + q.x),
+    ...obs.map(q => q.y * d.w + q.x),
+    ...chests.map(q => q.y * d.w + q.x),
+  ];
+  const nObs = chance(r, 0.3) ? 0 : ri(r, 1, 6);
+  for (let i = 0; i < nObs; i++) {
+    const p = takeFrom(farFrom(allFloor, 2));
+    if (!p) break;
+    if (!connectedFloors(d.w, d.h, [...blockedIdx(), p.y * d.w + p.x])) continue;
+    const [e, hp] = pick(r, OBS_TYPES);
+    obs.push({ x: p.x, y: p.y, hp, mhp: hp, e });
+  }
   const traps = [];
-  const nt = kind === 'boss' ? ri(r, 3, 4) : ri(r, 2, 3);
+  const nt = chance(r, 0.25) ? (kind === 'boss' ? 2 : 0) : ri(r, 1, kind === 'boss' ? 5 : 4) + (kind === 'boss' ? 1 : 0);
   for (let i = 0; i < nt; i++) {
     const p = takeFrom(farFrom(hallCells, 3)) || takeFrom(farFrom(allFloor, 3));
-    if (p) traps.push({ x: p.x, y: p.y, dmg: ri(r, 5, 7) + (row >= 6 ? 2 : 0), sprung: false });
+    if (p) traps.push({ x: p.x, y: p.y, dmg: ri(r, 5, 7) + (row >= 6 ? 2 : 0), hp: 5, mhp: 5, sprung: false });
   }
-  const chests = [];
-  const tryChest = () => {
+  const nChests = chance(r, 0.35) ? 0 : ri(r, 1, 3);
+  for (let i = 0; i < nChests; i++) {
     const p = takeFrom(farFrom(allFloor.filter(([x, y]) => d.inRoom(x, y)), 2));
-    if (!p) return;
-    const blocked = [...d.walls, ...chests.map(ch => ch.y * d.w + ch.x), p.y * d.w + p.x];
-    if (connectedFloors(d.w, d.h, blocked)) chests.push({ x: p.x, y: p.y, opened: false });
-  };
-  if (chance(r, 0.6)) tryChest();
-  if (chance(r, 0.3)) tryChest();
-  const items = [];
-  if (chance(r, 0.35)) {
-    const p = takeFrom(farFrom(allFloor, 3));
-    if (p) items.push({ x: p.x, y: p.y, t: 'gear', id: rollDropGear(r, row <= 3 ? 1 : row <= 6 ? 2 : 3), taken: false });
+    if (!p) break;
+    if (!connectedFloors(d.w, d.h, [...blockedIdx(), p.y * d.w + p.x])) continue;
+    chests.push({ x: p.x, y: p.y, opened: false });
   }
-  if (chance(r, 0.3)) { const p = takeFrom(farFrom(allFloor, 3)); if (p) items.push({ x: p.x, y: p.y, t: 'gold', v: ri(r, 6, 12), taken: false }); }
+  const items = [];
+  const nItems = ri(r, 0, 3);
+  for (let i = 0; i < nItems; i++) {
+    const p = takeFrom(farFrom(allFloor, 3));
+    if (!p) break;
+    if (chance(r, 0.5)) items.push({ x: p.x, y: p.y, t: 'gear', id: rollDropGear(r, row <= 3 ? 1 : row <= 6 ? 2 : 3), taken: false });
+    else items.push({ x: p.x, y: p.y, t: 'gold', v: ri(r, 6, 12), taken: false });
+  }
 
   G.player.mp = G.player.maxMp;
   G.combat = {
-    kind, row, w: d.w, h: d.h, walls: d.walls, traps, chests, items, foes,
-    px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, defended: 0, acted: 0,
-    cds: {}, mode: 'move', phase: 'player', turn: 1, info: -1, potIdx: -1, ei: 0, eap: -1,
+    kind, row, w: d.w, h: d.h, walls, obs, traps, chests, items, foes,
+    px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, defended: 0,
+    cds: {}, mode: 'move', phase: 'prep', turn: 1, info: -1, sel: -1, potIdx: -1, ei: 0, eap: -1,
     drops: { gold: 0, scrap: 0, gear: [] },
-    lines: [kind === 'boss' ? 'The dragon’s lair. Tread softly.' : kind === 'ambush' ? 'Ambush! Foes close in.' : 'You enter the chamber…'],
+    lines: ['Scout the room, set your build, then begin.'],
     _due: 0,
   };
   goto('COMBAT');
+}
+
+export function beginBattle() {
+  const c = C();
+  if (!c || c.phase !== 'prep') return;
+  c.phase = 'player';
+  c.sel = -1;
+  log(c.kind === 'boss' ? 'The dragon stirs…' : 'Battle begins!');
+  save();
 }
 
 // ---------- shared resolution ----------
@@ -310,7 +360,6 @@ export function moveTo(x, y) {
   if (!c || c.phase !== 'player') return;
   const d = Gr.reach(c, c.px, c.py, c.ap).get(Gr.k(x, y));
   if (!d) return;
-  c.acted = 1;
   if (provokeFoes(c.px, c.py, x, y)) { die(); return; }
   c.ap -= d;
   c.px = x;
@@ -330,16 +379,78 @@ export function attackFoe(i) {
   const w = getPrimary();
   const f = c.foes[i];
   if (!f || f.dead || c.ap < w.ap || Gr.cheb(c.px, c.py, f.x, f.y) > w.rng) return;
-  c.acted = 1;
   c.ap -= w.ap;
   hitFoe(f, Math.max(1, w.dmg + ri(G.rng, -1, 1)), false);
   if (!checkWin()) save();
 }
 
+// A destructible thing (wall / obstacle / armed trap) at a tile, if any.
+export function structAt(x, y) {
+  const c = C();
+  const wl = Gr.wallAt(c, x, y);
+  if (wl) return { t: 'wall', o: wl };
+  const ob = Gr.obsAt(c, x, y);
+  if (ob) return { t: 'obs', o: ob };
+  const tr = Gr.trapAt(c, x, y);
+  if (tr) return { t: 'trap', o: tr };
+  return null;
+}
+
+export function structTargets() {
+  const c = C();
+  const w = getPrimary();
+  if (!c || c.phase !== 'player' || c.mode !== 'atk' || c.ap < w.ap) return [];
+  const out = [];
+  const scan = (list, t) => {
+    for (const o of list) {
+      if (t === 'trap' && o.sprung) continue;
+      if (Gr.cheb(c.px, c.py, o.x, o.y) <= w.rng) out.push({ t, x: o.x, y: o.y });
+    }
+  };
+  scan(c.walls, 'wall');
+  scan(c.obs, 'obs');
+  scan(c.traps, 'trap');
+  return out;
+}
+
+export function attackStructAt(x, y) {
+  const c = C();
+  if (!c || c.phase !== 'player') return;
+  const w = getPrimary();
+  const s = structAt(x, y);
+  if (!s || (s.t === 'trap' && s.o.sprung)) return;
+  if (c.ap < w.ap || Gr.cheb(c.px, c.py, x, y) > w.rng) return;
+  c.ap -= w.ap;
+  const dmg = Math.max(1, w.dmg + ri(G.rng, -1, 1));
+  s.o.hp -= dmg;
+  FX.push({ tx: x, ty: y, v: `-${dmg}`, c: 'dmg' });
+  if (s.o.hp > 0) { save(); return; }
+  if (s.t === 'wall') {
+    c.walls.splice(c.walls.indexOf(s.o), 1);
+    FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
+    log('You smash through the wall!');
+  } else if (s.t === 'obs') {
+    c.obs.splice(c.obs.indexOf(s.o), 1);
+    FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
+    log(`The ${s.o.e === '🪨' ? 'boulder' : s.o.e === '🪵' ? 'log pile' : 'urn'} breaks apart!`);
+    if (s.o.e === '⚱️' && chance(G.rng, 0.5)) {
+      const v = ri(G.rng, 3, 7);
+      G.player.gold += v;
+      G.stats.goldEarned += v;
+      FX.push({ tx: x, ty: y, v: `+${v}💰`, c: 'gold' });
+      log(`${v} gold spills out!`);
+    }
+  } else {
+    c.traps.splice(c.traps.indexOf(s.o), 1);
+    FX.push({ tx: x, ty: y, v: '🔧', c: 'blk' });
+    log('You dismantle the trap.');
+  }
+  save();
+}
+
 export function defend() {
   const c = C();
   if (!c || c.phase !== 'player' || c.ap < 1 || c.defended) return;
-  c.acted = 1;
   c.defended = 1; // once per turn — block would stack absurdly otherwise
   c.ap -= 1;
   const gain = 2 + (getSecondary().block || 0) + getArmor().def;
@@ -357,7 +468,6 @@ export function usePotion(i) {
   const p = POTIONS[id];
   if (p.fx === 'bomb') { c.mode = 'bomb'; c.potIdx = i; save(); return; } // aim first, spend on throw
   G.player.potions.splice(i, 1);
-  c.acted = 1;
   c.ap -= 1;
   const P = G.player;
   if (p.fx === 'heal') { P.hp = Math.min(P.maxHp, P.hp + p.v); FX.push({ tx: c.px, ty: c.py, v: `+${p.v}❤️`, c: 'heal' }); }
@@ -376,7 +486,6 @@ export function throwBomb(i) {
   const p = POTIONS[id];
   if (Gr.cheb(c.px, c.py, f.x, f.y) > p.rng) return;
   G.player.potions.splice(c.potIdx, 1);
-  c.acted = 1;
   c.ap -= 1;
   c.mode = 'move';
   c.potIdx = -1;
@@ -390,7 +499,6 @@ export function openChestAt(x, y) {
   if (!c || c.phase !== 'player' || c.ap < 1) return;
   const ch = c.chests.find(q => q.x === x && q.y === y && !q.opened);
   if (!ch || Gr.cheb(c.px, c.py, x, y) !== 1) return;
-  c.acted = 1;
   c.ap -= 1;
   ch.opened = true;
   const r = G.rng, x2 = rnd(r);
@@ -511,7 +619,6 @@ export function castSkill(slot, tx, ty) {
     }
   }
 
-  c.acted = 1;
   c.ap -= sk.ap;
   P.mp -= sk.mp;
   if (sk.cd) c.cds[sk.id] = sk.cd;
@@ -529,11 +636,21 @@ export function castSkill(slot, tx, ty) {
 // ---------- board taps (immediate-mode UI routes here) ----------
 export function tapBoard(x, y) {
   const c = C();
-  if (!c || c.phase !== 'player') return;
+  if (!c) return;
   if (c.info >= 0) { c.info = -1; return; }
   const fi = foeIdxAt(c, x, y);
+  if (c.phase === 'prep') { // scouting: taps only select/inspect
+    if (fi >= 0) {
+      if (c.sel === fi) { c.info = fi; c.sel = -1; }
+      else c.sel = fi;
+    } else c.sel = -1;
+    return;
+  }
+  if (c.phase !== 'player') return;
   if (c.mode === 'atk') {
     if (fi >= 0 && atkTargets().includes(fi)) { attackFoe(fi); return; }
+    const s = structAt(x, y);
+    if (s && !(s.t === 'trap' && s.o.sprung) && Gr.cheb(c.px, c.py, x, y) <= getPrimary().rng) { attackStructAt(x, y); return; }
   } else if (c.mode === 'sk0' || c.mode === 'sk1') {
     const slot = c.mode === 'sk1' ? 1 : 0;
     const sk = skillFor(slot);
@@ -542,14 +659,20 @@ export function tapBoard(x, y) {
   } else if (c.mode === 'bomb') {
     if (fi >= 0) { throwBomb(fi); return; }
   } else {
-    if (fi >= 0) { c.info = fi; return; }
+    // move mode: tap a foe once to preview its range, again for details
+    if (fi >= 0) {
+      if (c.sel === fi) { c.info = fi; c.sel = -1; }
+      else c.sel = fi;
+      return;
+    }
+    c.sel = -1;
     const ch = Gr.chestAt(c, x, y);
     if (ch && !ch.opened && Gr.cheb(c.px, c.py, x, y) === 1) { openChestAt(x, y); return; }
     moveTo(x, y);
     return;
   }
   // invalid tap while targeting: inspect foes, otherwise cancel back to move
-  if (fi >= 0) { c.info = fi; return; }
+  if (fi >= 0) { c.sel = fi; c.mode = 'move'; return; }
   c.mode = 'move';
   c.potIdx = -1;
 }
@@ -576,14 +699,41 @@ export function bombTargets() {
   });
 }
 
+// ---------- foe movement/threat preview (for the UI) ----------
+export function foeReach(i, budget) {
+  const c = C();
+  const f = c.foes[i];
+  if (!f || f.dead) return new Map();
+  return Gr.reach(c, f.x, f.y, budget);
+}
+
+// Can this foe damage the player this turn, moving up to `budget` AP then attacking?
+export function foeThreatens(i, budget, rmap) {
+  const c = C();
+  const f = c.foes[i];
+  if (!f || f.dead || f.stun > 0) return false;
+  const m = MONSTERS[f.mid];
+  for (const mv of m.moves) {
+    if (mv.t !== 'melee' && mv.t !== 'rng') continue;
+    const rng = mv.t === 'melee' ? 1 : mv.rng;
+    if (mv.ap <= budget && Gr.cheb(f.x, f.y, c.px, c.py) <= rng) return true;
+    for (const [kk, d] of rmap) {
+      if (d + mv.ap > budget) continue;
+      const [x, y] = kk.split(',').map(Number);
+      if (Gr.cheb(x, y, c.px, c.py) <= rng) return true;
+    }
+  }
+  return false;
+}
+
 // ---------- enemy turn ----------
 export function endTurn() {
   const c = C();
   if (!c || c.phase !== 'player') return;
   c.mode = 'move';
   c.info = -1;
+  c.sel = -1;
   c.potIdx = -1;
-  c.acted = 1;
   c.phase = 'enemy';
   c.ei = 0;
   c.eap = -1;

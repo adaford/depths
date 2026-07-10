@@ -12,6 +12,7 @@ import {
 import {
   FX, AGRO, tapBoard, setMode, defend, endTurn, usePotion, closeInfo,
   atkTargets, skillTargets, skillFor, skillIssue, bombTargets, castSkill,
+  beginBattle, structTargets, foeReach, foeThreatens,
 } from './combat.js';
 import { MONSTERS, POTIONS, SKILLS, RECIPES, NODE_EMOJI, getItem } from './data.js';
 import { reach, k, cheb } from './grid.js';
@@ -149,6 +150,7 @@ function combat(t) {
   const c = G.combat;
   if (!c) { goto('MAP'); return; }
   const P = G.player, w = getPrimary();
+  const prep = c.phase === 'prep';
   const myTurn = c.phase === 'player';
 
   // compact top bar
@@ -156,13 +158,14 @@ function combat(t) {
   U.bar(10, 23, 106, 11, P.mp / P.maxMp, '#6a5bbf', `${P.mp} MP`);
   if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, 168, 13, 13, BLU, 'left');
   if (c.pPsnT > 0) U.txt(`☠️${c.pPsn}×${c.pPsnT}`, 168, 30, 12, '#a8e06a', 'left');
-  U.txt(c.kind === 'boss' ? '🐉 BOSS' : c.kind === 'ambush' ? '☠️ AMBUSH' : `Turn ${c.turn}`, 412, 12, 13, c.kind === 'fight' ? DIM : GOLD, 'right', c.kind !== 'fight');
+  U.txt(prep ? '🔭 SCOUT' : c.kind === 'boss' ? '🐉 BOSS' : c.kind === 'ambush' ? '☠️ AMBUSH' : `Turn ${c.turn}`, 412, 12, 13, prep ? BLU : c.kind === 'fight' ? DIM : GOLD, 'right', prep || c.kind !== 'fight');
   U.txt(`💰${P.gold}`, 412, 30, 13, GOLD, 'right');
 
-  // camera: follow the player (or the acting foe), unless the user dragged away
+  // camera: follow the player / acting foe / inspected foe, unless dragged away
   if (G.combat !== lastC) { lastC = G.combat; camFree = false; camFocusKey = ''; }
   const actingFoe = c.phase === 'enemy' && c.foes[c.ei] && !c.foes[c.ei].dead && c.foes[c.ei].awake ? c.foes[c.ei] : null;
-  const focus = actingFoe || { x: c.px, y: c.py };
+  const selFoe = ((myTurn || prep) && c.sel >= 0 && c.foes[c.sel] && !c.foes[c.sel].dead) ? c.foes[c.sel] : null;
+  const focus = actingFoe || selFoe || { x: c.px, y: c.py };
   const fkey = `${focus.x},${focus.y}:${c.phase}`;
   if (fkey !== camFocusKey) { camFocusKey = fkey; camFree = false; }
   const maxCX = Math.max(0, c.w * T - VW), maxCY = Math.max(0, c.h * T - VH);
@@ -185,6 +188,7 @@ function combat(t) {
   // targeting context for the current mode
   const reachMap = (myTurn && c.mode === 'move') ? reach(c, c.px, c.py, c.ap) : null;
   const aTargets = (myTurn && c.mode === 'atk') ? atkTargets() : [];
+  const sTargetsStruct = (myTurn && c.mode === 'atk') ? structTargets() : [];
   const slot = c.mode === 'sk0' ? 0 : c.mode === 'sk1' ? 1 : -1;
   const sTargets = (myTurn && slot >= 0) ? skillTargets(slot) : [];
   const sSkill = slot >= 0 ? skillFor(slot) : null;
@@ -194,20 +198,37 @@ function combat(t) {
     sSkill && sSkill.tgt === 'foe' ? { rng: sSkill.rng, color: 'rgba(179,157,255,0.22)' } :
     c.mode === 'bomb' && c.potIdx >= 0 ? { rng: 3, color: 'rgba(255,171,74,0.22)' } : null;
 
+  // foe walk-range preview: the inspected foe, or whoever is taking its turn
+  let fvFoe = null, fvReach = null, fvThreat = false;
+  const fvIdx = actingFoe ? c.ei : selFoe ? c.sel : -1;
+  if (fvIdx >= 0) {
+    fvFoe = c.foes[fvIdx];
+    const budget = actingFoe && c.eap >= 0 ? c.eap : MONSTERS[fvFoe.mid].ap;
+    fvReach = foeReach(fvIdx, budget);
+    fvThreat = foeThreatens(fvIdx, budget, fvReach);
+  }
+
   // board
   U.ctx.save();
   U.rr(VX, VY, VW, VH, 10);
   U.ctx.clip();
   U.ctx.fillStyle = '#07070c';
   U.ctx.fillRect(VX, VY, VW, VH);
-  const wallSet = new Set(c.walls);
+  const wallSet = new Set(c.walls.map(q => q.y * c.w + q.x));
   const isWall = (x, y) => x < 0 || x >= c.w || y < 0 || y >= c.h || wallSet.has(y * c.w + x);
   const x0 = Math.max(0, Math.floor(camX / T)), x1 = Math.min(c.w - 1, Math.ceil((camX + VW) / T));
   const y0 = Math.max(0, Math.floor(camY / T)), y1 = Math.min(c.h - 1, Math.ceil((camY + VH) / T));
+  const structRing = (sx, sy) => {
+    U.rr(sx + 5, sy + 5, T - 10, T - 10, 8);
+    U.ctx.strokeStyle = 'rgba(255,107,94,0.7)';
+    U.ctx.lineWidth = 1.5;
+    U.ctx.stroke();
+  };
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const sx = VX + x * T - camX, sy = VY + y * T - camY;
-      if (wallSet.has(y * c.w + x)) {
+      const wl = wallSet.has(y * c.w + x) ? c.walls.find(q => q.x === x && q.y === y) : null;
+      if (wl) {
         // solid rock: draw a face only where it borders walkable space
         let edge = false;
         for (let dy = -1; dy <= 1 && !edge; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -219,7 +240,10 @@ function combat(t) {
           U.ctx.strokeStyle = '#26263a';
           U.ctx.lineWidth = 1;
           U.ctx.strokeRect(sx + 1.5, sy + 1.5, T - 3, T - 3);
+          if (wl.hp < wl.mhp) U.bar(sx + 8, sy + T - 9, T - 16, 4, wl.hp / wl.mhp, '#8a6f3a');
+          if (sTargetsStruct.some(q => q.x === x && q.y === y)) structRing(sx, sy);
         }
+        U.hit(sx, sy, T, T, () => tapBoard(x, y));
         continue;
       }
       U.ctx.fillStyle = (x + y) % 2 ? '#15151f' : '#181822';
@@ -227,6 +251,10 @@ function combat(t) {
       if (rangeTint && cheb(c.px, c.py, x, y) <= rangeTint.rng && !(x === c.px && y === c.py)) {
         U.ctx.fillStyle = rangeTint.color;
         U.ctx.fillRect(sx, sy, T, T);
+      }
+      if (fvReach && fvReach.has(k(x, y))) {
+        U.ctx.fillStyle = 'rgba(255,140,60,0.2)';
+        U.ctx.fillRect(sx + 2, sy + 2, T - 4, T - 4);
       }
       if (reachMap && reachMap.has(k(x, y))) {
         U.ctx.fillStyle = 'rgba(90,200,110,0.17)';
@@ -242,15 +270,24 @@ function combat(t) {
       U.hit(sx, sy, T, T, () => tapBoard(x, y));
     }
   }
-  // traps / chests / ground items
+  // obstacles / traps / chests / ground items
   const seen = (x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
   const sPos = (x, y) => [VX + x * T - camX + T / 2, VY + y * T - camY + T / 2];
+  for (const o of c.obs) {
+    if (!seen(o.x, o.y)) continue;
+    const [sx, sy] = sPos(o.x, o.y);
+    U.txt(o.e, sx, sy, 30);
+    if (o.hp < o.mhp) U.bar(sx - T / 2 + 8, sy + T / 2 - 9, T - 16, 4, o.hp / o.mhp, '#8a6f3a');
+    if (sTargetsStruct.some(q => q.x === o.x && q.y === o.y)) structRing(sx - T / 2, sy - T / 2);
+  }
   for (const tr of c.traps) {
     if (!seen(tr.x, tr.y)) continue;
     const [sx, sy] = sPos(tr.x, tr.y);
     U.ctx.globalAlpha = tr.sprung ? 0.18 : 0.9;
     U.txt('🔺', sx, sy + 2, 24);
     U.ctx.globalAlpha = 1;
+    if (!tr.sprung && tr.hp < tr.mhp) U.bar(sx - T / 2 + 8, sy + T / 2 - 9, T - 16, 4, tr.hp / tr.mhp, '#8a6f3a');
+    if (sTargetsStruct.some(q => q.x === tr.x && q.y === tr.y)) structRing(sx - T / 2, sy - T / 2);
   }
   for (const ch of c.chests) {
     if (!seen(ch.x, ch.y)) continue;
@@ -262,9 +299,19 @@ function combat(t) {
     const [sx, sy] = sPos(it.x, it.y);
     U.txt(it.t === 'gold' ? '💰' : getItem(it.id).emoji, sx, sy, 24);
   }
-  // player
+  // player (red-highlighted while a previewed foe can reach and hit them)
   {
     const [sx, sy] = sPos(c.px, c.py);
+    if (fvThreat) {
+      const pulse = 0.55 + Math.sin(t / 160) * 0.25;
+      U.ctx.fillStyle = `rgba(255,70,60,${pulse * 0.35})`;
+      U.ctx.fillRect(sx - T / 2 + 2, sy - T / 2 + 2, T - 4, T - 4);
+      U.rr(sx - T / 2 + 2, sy - T / 2 + 2, T - 4, T - 4, 10);
+      U.ctx.strokeStyle = `rgba(255,80,70,${pulse})`;
+      U.ctx.lineWidth = 3;
+      U.ctx.stroke();
+      U.txt('⚠️', sx, sy - T / 2 - 8, 13);
+    }
     U.txt('🤺', sx, sy, 40);
     if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, sx, sy - T / 2 + 9, 11, BLU);
   }
@@ -280,9 +327,9 @@ function combat(t) {
       U.ctx.lineWidth = 2.5;
       U.ctx.stroke();
     }
-    if (c.phase === 'enemy' && c.ei === i) {
+    if ((c.phase === 'enemy' && c.ei === i) || c.sel === i) {
       U.rr(sx + 2, sy + 2, T - 4, T - 4, 10);
-      U.ctx.strokeStyle = '#ffffff';
+      U.ctx.strokeStyle = c.sel === i ? GOLD : '#ffffff';
       U.ctx.lineWidth = 2;
       U.ctx.stroke();
     }
@@ -309,78 +356,83 @@ function combat(t) {
     U.ctx.fill();
   }
   U.txt('AP', 20 + P.apMax * 20 + 4, 526, 12, DIM, 'left');
-  const strip = !myTurn ? ['Enemy turn…', RED] :
+  const strip = prep ? (fvFoe ? [`${MONSTERS[fvFoe.mid].name}: orange = its range${fvThreat ? ' — it can reach you!' : ''}`, fvThreat ? RED : '#ffab4a'] : ['Scout: drag around · tap foes for range', BLU]) :
+    !myTurn ? (fvThreat ? ['Enemy turn — it can hit you!', RED] : ['Enemy turn…', RED]) :
     c.mode === 'atk' ? [`${w.emoji} ${w.name}: ${w.dmg} dmg · rng ${w.rng} · ${w.ap} AP`, RED] :
     sSkill ? [`${sSkill.emoji} ${sSkill.name}: ${shortSkillStat(sSkill, w)} · rng ${sSkill.rng || 0} · ${sSkill.ap}⚡${sSkill.mp}🔮 · cd ${sSkill.cd}`, PUR] :
     c.mode === 'bomb' ? ['💣 10 dmg · rng 3 · 1 AP — tap a foe', '#ffab4a'] :
+    selFoe ? [`${MONSTERS[selFoe.mid].name}: orange = its range${fvThreat ? ' — you are in danger!' : ''}`, fvThreat ? RED : '#ffab4a'] :
     ['Green = tiles you can reach', GRN];
   U.txt(strip[0], 412, 526, 12, strip[1], 'right');
 
   (c.lines || []).slice(-2).forEach((s, i) => U.txt(s, 12, 543 + i * 16, 11, DIM, 'left'));
 
-  // action bar
-  const dis = !myTurn;
-  const qHit = (x, y2, type) => U.hit(x, y2, 30, 30, () => { aInfo = type; });
-  const selStroke = (on) => on ? GOLD : undefined;
-  U.button(14, 574, 76, 56, '🚶', () => setMode('move'), { size: 20, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
-  U.button(94, 574, 76, 56, w.emoji, () => setMode('atk'), { size: 20, sub: `${w.dmg}dmg·${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
-  U.txt('❓', 158, 582, 10, DIM);
-  qHit(140, 570, { t: 'atk' });
-  for (const s2 of [0, 1]) {
-    const sk = skillFor(s2);
-    const x = 174 + s2 * 80;
-    if (!sk) {
-      U.panel(x, 574, 76, 56, 14, '#12121b', '#22222f');
-      U.txt('·', x + 38, 602, 18, '#33333f');
-      continue;
-    }
-    const issue = skillIssue(s2);
-    const cd = (c.cds && c.cds[sk.id]) || 0;
-    U.button(x, 574, 76, 56, sk.emoji, () => {
-      if (skillIssue(s2)) return;
-      if (sk.tgt === 'self' || sk.tgt === 'burst') castSkill(s2);
-      else setMode('sk' + s2);
-    }, {
-      size: 20,
-      sub: cd > 0 ? `CD ${cd}` : issue || `${sk.ap}⚡${sk.mp}🔮`,
-      disabled: dis || !!issue,
-      stroke: selStroke(c.mode === 'sk' + s2),
-    });
-    U.txt('❓', x + 64, 582, 10, DIM);
-    qHit(x + 46, 570, { t: 'sk', slot: s2 });
-  }
-  const defGain = 2 + (getSecondary().block || 0) + getArmor().def;
-  U.button(334, 574, 72, 56, '🛡️', defend, { size: 20, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
-  U.txt('❓', 394, 582, 10, DIM);
-  qHit(376, 570, { t: 'def' });
-
-  // potions + end turn
-  for (let i = 0; i < 3; i++) {
-    const x = 14 + i * 88;
-    const id = P.potions[i];
-    if (id) {
-      const p = POTIONS[id];
-      U.button(x, 636, 82, 56, p.emoji, () => usePotion(i), {
-        size: 22, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
-        stroke: (c.mode === 'bomb' && c.potIdx === i) ? GOLD : undefined,
-      });
-    } else {
-      U.panel(x, 636, 82, 56, 14, '#12121b', '#22222f');
-      U.txt('·', x + 41, 664, 18, '#33333f');
-    }
-  }
-  U.button(282, 636, 124, 56, 'END', endTurn, { size: 18, sub: 'turn', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis });
-
-  // pre-fight loadout swap (until you take your first action) / contextual hint
-  if (myTurn && c.turn === 1 && !c.acted) {
-    U.button(30, 698, 170, 56, '🎒 Swap Gear', () => { invPage = 0; G.ret = 'COMBAT'; goto('INV'); }, { size: 15 });
-    U.button(220, 698, 170, 56, '✨ Swap Skills', () => { skillPage = 0; G.ret = 'COMBAT'; goto('SKILLS'); }, { size: 15 });
+  if (prep) {
+    // scout phase: look around, inspect, set your build, then begin
+    U.button(14, 574, 124, 62, '🎒', () => { invPage = 0; G.ret = 'COMBAT'; goto('INV'); }, { size: 20, sub: 'Swap Gear' });
+    U.button(148, 574, 124, 62, '✨', () => { skillPage = 0; G.ret = 'COMBAT'; goto('SKILLS'); }, { size: 20, sub: 'Swap Skills' });
+    U.button(282, 574, 124, 62, '⚔️', beginBattle, { size: 20, sub: 'BEGIN', fill: '#3a2f1c', stroke: '#8a6f3a' });
+    U.txt('Enemies hold still while you scout the room.', 210, 664, 12, DIM);
+    U.txt(`${c.foes.filter(f => !f.dead && !f.awake).length} sleeping · ${c.foes.filter(f => !f.dead && f.awake).length} alert`, 210, 686, 12, '#ffab4a');
   } else {
+    // action bar
+    const dis = !myTurn;
+    const qHit = (x, y2, type) => U.hit(x, y2, 30, 30, () => { aInfo = type; });
+    const selStroke = (on) => on ? GOLD : undefined;
+    U.button(14, 574, 76, 56, '🚶', () => setMode('move'), { size: 20, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
+    U.button(94, 574, 76, 56, w.emoji, () => setMode('atk'), { size: 20, sub: `${w.dmg}dmg·${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
+    U.txt('❓', 158, 582, 10, DIM);
+    qHit(140, 570, { t: 'atk' });
+    for (const s2 of [0, 1]) {
+      const sk = skillFor(s2);
+      const x = 174 + s2 * 80;
+      if (!sk) {
+        U.panel(x, 574, 76, 56, 14, '#12121b', '#22222f');
+        U.txt('·', x + 38, 602, 18, '#33333f');
+        continue;
+      }
+      const issue = skillIssue(s2);
+      const cd = (c.cds && c.cds[sk.id]) || 0;
+      U.button(x, 574, 76, 56, sk.emoji, () => {
+        if (skillIssue(s2)) return;
+        if (sk.tgt === 'self' || sk.tgt === 'burst') castSkill(s2);
+        else setMode('sk' + s2);
+      }, {
+        size: 20,
+        sub: cd > 0 ? `CD ${cd}` : issue || `${sk.ap}⚡${sk.mp}🔮`,
+        disabled: dis || !!issue,
+        stroke: selStroke(c.mode === 'sk' + s2),
+      });
+      U.txt('❓', x + 64, 582, 10, DIM);
+      qHit(x + 46, 570, { t: 'sk', slot: s2 });
+    }
+    const defGain = 2 + (getSecondary().block || 0) + getArmor().def;
+    U.button(334, 574, 72, 56, '🛡️', defend, { size: 20, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
+    U.txt('❓', 394, 582, 10, DIM);
+    qHit(376, 570, { t: 'def' });
+
+    // potions + end turn
+    for (let i = 0; i < 3; i++) {
+      const x = 14 + i * 88;
+      const id = P.potions[i];
+      if (id) {
+        const p = POTIONS[id];
+        U.button(x, 636, 82, 56, p.emoji, () => usePotion(i), {
+          size: 22, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
+          stroke: (c.mode === 'bomb' && c.potIdx === i) ? GOLD : undefined,
+        });
+      } else {
+        U.panel(x, 636, 82, 56, 14, '#12121b', '#22222f');
+        U.txt('·', x + 41, 664, 18, '#33333f');
+      }
+    }
+    U.button(282, 636, 124, 56, 'END', endTurn, { size: 18, sub: 'turn', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis });
+
     const hint = !myTurn ? '' :
-      c.mode === 'atk' ? 'Tap a ringed foe to strike (diagonals count)' :
+      c.mode === 'atk' ? 'Tap foes, walls, rocks, or traps in range to hit them' :
       c.mode === 'sk0' || c.mode === 'sk1' ? 'Tap a target in the tinted range' :
       c.mode === 'bomb' ? 'Tap a foe in range to throw' :
-      'Tap a green tile to move · drag to look around · tap a foe to inspect';
+      'Tap green: move · tap foe: its range · again: details';
     U.txt(hint, 210, 712, 12, DIM);
   }
 
@@ -411,7 +463,7 @@ function foeInfo(f) {
   U.txt(m.emoji, 76, y0 + 46, 40);
   U.txt(m.name, 110, y0 + 34, 20, TXT, 'left', true);
   U.txt(`❤️ ${f.hp}/${f.maxHp}   🛡️ DEF ${m.def}   ⚡ ${m.ap} AP`, 110, y0 + 60, 13, DIM, 'left');
-  U.txt(f.awake ? '👁️ It has noticed you' : `💤 Unaware — wakes within ${AGRO} tiles`, 110, y0 + 80, 12, f.awake ? '#ff9b6b' : DIM, 'left');
+  U.txt(f.awake ? '👁️ Alert — will act on its turn' : `💤 Asleep — wakes within ${AGRO} tiles or when hurt`, 110, y0 + 80, 12, f.awake ? '#ff9b6b' : DIM, 'left');
   U.txt('Moves', 52, y0 + 112, 14, GOLD, 'left', true);
   m.moves.forEach((mv, i) => {
     U.txt(`${mv.emoji} ${mv.name}`, 52, y0 + 138 + i * 26, 14, TXT, 'left');
@@ -665,7 +717,7 @@ function title() {
   U.txt('⚔️ fight   ❓ event   💰 treasure   🛒 shop', 210, 612, 13, DIM);
   U.txt('Explore scrolling dungeons: move, strike, and cast.', 210, 636, 13, DIM);
   U.txt('Loot every foe. Craft. Slay the dragon on floor 10.', 210, 658, 13, DIM);
-  U.txt('v0.3 · built with Claude', 210, 774, 11, '#55536a');
+  U.txt('v0.4 · built with Claude', 210, 774, 11, '#55536a');
 }
 
 function endScreen(emoji, label, color) {
