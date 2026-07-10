@@ -13,7 +13,7 @@ import {
   openChestAt, atkTargets, skillTargets, skillFor, skillIssue,
 } from '../js/combat.js';
 import { WEAPONS, OFFHANDS, ARMOR, SKILLS, RECIPES, getItem } from '../js/data.js';
-import { man, k, wallAt, chestAt, stepToward } from '../js/grid.js';
+import { cheb, k, wallAt, chestAt, stepToward } from '../js/grid.js';
 
 let tt = 1000;
 const counts = { crafts: 0, sold: 0, scrapped: 0, chests: 0, skillsLearned: 0 };
@@ -39,12 +39,12 @@ function checkInvariants() {
   const c = G.combat;
   if (c && G.screen === 'COMBAT') {
     if (c.ap < 0) fail('negative AP');
-    if (c.turn > 80) fail('combat stalled past 80 turns');
+    if (c.turn > 120) fail('combat stalled past 120 turns');
     const occ = new Set([k(c.px, c.py)]);
     if (wallAt(c, c.px, c.py) || chestAt(c, c.px, c.py)) fail('player inside obstacle');
     for (const f of c.foes) {
       if (f.dead) continue;
-      if (f.x < 0 || f.x > 6 || f.y < 0 || f.y > 6) fail('foe out of bounds');
+      if (f.x < 0 || f.x >= c.w || f.y < 0 || f.y >= c.h) fail('foe out of bounds');
       if (wallAt(c, f.x, f.y) || chestAt(c, f.x, f.y)) fail('foe inside obstacle');
       if (occ.has(k(f.x, f.y))) fail('units overlap');
       occ.add(k(f.x, f.y));
@@ -129,7 +129,7 @@ function playCombat() {
 
   const foes = c.foes.map((f, i) => ({ f, i })).filter(x => !x.f.dead);
   if (!foes.length) fail('player phase with no live foes');
-  const dist = (f) => man(c.px, c.py, f.x, f.y);
+  const dist = (f) => cheb(c.px, c.py, f.x, f.y);
   const nearest = foes.reduce((a, b) => (dist(a.f) <= dist(b.f) ? a : b));
 
   // skills
@@ -172,19 +172,21 @@ function playCombat() {
 
   // open an adjacent chest (free value)
   for (const ch of c.chests) {
-    if (!ch.opened && man(c.px, c.py, ch.x, ch.y) === 1 && c.ap >= 1) {
+    if (!ch.opened && cheb(c.px, c.py, ch.x, ch.y) === 1 && c.ap >= 1) {
       openChestAt(ch.x, ch.y);
       counts.chests++;
       return;
     }
   }
 
-  // walk one BFS step toward the nearest foe (accept a trap step only when healthy)
+  // walk one BFS step toward the closest reachable foe (a sleeping foe can plug a
+  // corridor, making foes behind it unreachable — try each in distance order).
+  // stepToward already prefers trap-free routes, so a trap step is the only way through.
   if (c.ap >= 1) {
-    const step = stepToward(c, { x: c.px, y: c.py }, nearest.f.x, nearest.f.y);
-    if (step) {
-      const trapped = c.traps.some(tr => !tr.sprung && tr.x === step.x && tr.y === step.y);
-      if (!trapped || P.hp > P.maxHp * 0.6) { moveTo(step.x, step.y); return; }
+    const byDist = [...foes].sort((a, b) => dist(a.f) - dist(b.f));
+    for (const t of byDist) {
+      const step = stepToward(c, { x: c.px, y: c.py }, t.f.x, t.f.y);
+      if (step) { moveTo(step.x, step.y); return; }
     }
   }
 

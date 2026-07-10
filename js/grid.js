@@ -1,20 +1,21 @@
-// Spatial helpers for the 7x7 tactical board. Pure functions over a G.combat-shaped
-// object (walls/traps/chests/foes/px/py) — no game state of their own.
-export const CW = 7, CH = 7;
+// Spatial helpers for tactical boards. Pure functions over a G.combat-shaped
+// object (w/h/walls/traps/chests/foes/px/py) — no game state of their own.
+// Movement is 4-directional; attack ranges use chebyshev (diagonals count).
 export const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-export const inB = (x, y) => x >= 0 && x < CW && y >= 0 && y < CH;
+export const inB = (c, x, y) => x >= 0 && x < c.w && y >= 0 && y < c.h;
 export const man = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
+export const cheb = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
 export const k = (x, y) => x + ',' + y;
 
-export function wallAt(c, x, y) { return c.walls.includes(y * CW + x); }
+export function wallAt(c, x, y) { return c.walls.includes(y * c.w + x); }
 export function chestAt(c, x, y) { return c.chests.find(ch => ch.x === x && ch.y === y) || null; }
 export function trapAt(c, x, y) { return c.traps.find(t => t.x === x && t.y === y && !t.sprung) || null; }
 export function foeAt(c, x, y) { return c.foes.find(f => !f.dead && f.x === x && f.y === y) || null; }
 
 // Walkable for pathing purposes (traps ARE walkable — they're handled separately).
 export function open(c, x, y) {
-  return inB(x, y) && !wallAt(c, x, y) && !chestAt(c, x, y) && !foeAt(c, x, y) && !(c.px === x && c.py === y);
+  return inB(c, x, y) && !wallAt(c, x, y) && !chestAt(c, x, y) && !foeAt(c, x, y) && !(c.px === x && c.py === y);
 }
 
 // BFS: tiles reachable within `ap` steps. Traps can be entered deliberately but end
@@ -56,7 +57,7 @@ function bfsStep(c, f, tx, ty, allowTraps) {
       const nx = x + dx, ny = y + dy, kk = k(nx, ny);
       if (prev.has(kk)) continue;
       if (nx === tx && ny === ty) { prev.set(kk, k(x, y)); goal = kk; break; }
-      if (!open(c, nx, ny) || (f.x === nx && f.y === ny)) continue;
+      if (!open(c, nx, ny)) continue;
       if (!allowTraps && trapAt(c, nx, ny)) continue;
       prev.set(kk, k(x, y));
       q.push([nx, ny]);

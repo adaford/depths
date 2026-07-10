@@ -6,7 +6,7 @@ import { WEAPONS, OFFHANDS, ARMOR, POTIONS, SKILLS, RECIPES, getItem } from './d
 import { startCombat } from './combat.js';
 
 export const G = { screen: 'TITLE' };
-const KEY = 'depths_save_2';
+const KEY = 'depths_save_3';
 export const BAG_MAX = 12, POT_MAX = 3;
 const hasStore = () => typeof localStorage !== 'undefined';
 
@@ -25,7 +25,7 @@ export function loadSave() {
     const s = localStorage.getItem(KEY);
     if (!s) return false;
     const d = JSON.parse(s);
-    if (!d || d.v !== 2 || !d.player) return false;
+    if (!d || d.v !== 3 || !d.player) return false;
     resetG();
     Object.assign(G, d);
     if (G.combat) G.combat._due = 0; // performance.now() restarts every page load
@@ -36,7 +36,9 @@ export function loadSave() {
 export function goto(s) { G.screen = s; save(); }
 
 export function boot() {
-  try { if (hasStore()) localStorage.removeItem('depths_save_1'); } catch (e) {} // pre-tactical saves
+  try {
+    if (hasStore()) { localStorage.removeItem('depths_save_1'); localStorage.removeItem('depths_save_2'); } // older schemas
+  } catch (e) {}
   if (loadSave() && G.player.hp > 0 && !G.dead && !G.won) {
     G.back = (G.screen !== 'TITLE') ? G.screen : (G.back || 'MAP');
   } else {
@@ -57,7 +59,7 @@ export function continueRun() {
 export function newRun() {
   const seed = ((Date.now() % 2147483647) ^ Math.floor(Math.random() * 2147483647)) >>> 0;
   resetG();
-  G.v = 2;
+  G.v = 3;
   G.rng = makeRng(seed);
   G.map = genMap(G.rng);
   G.cur = -1;
@@ -85,8 +87,9 @@ export function getSecondary() { return OFFHANDS[G.player.secondary] || { name: 
 export function getArmor() { return ARMOR[G.player.armor] || { name: 'No Armor', emoji: '🧺', def: 0, tier: 0 }; }
 
 // ---- map generation ----
-// 8 rows bottom-to-top: row 0 = easy fights, row 6 = guaranteed campfire event, row 7 = boss.
-const ROWS = 8;
+// 10 rows bottom-to-top: row 0 = easy fights, row 8 = guaranteed campfire event,
+// row 9 = boss. Every node offers 1-4 exits into the next row.
+export const ROWS = 10;
 
 function rollType(r) {
   const x = rnd(r);
@@ -101,12 +104,12 @@ function genMap(r) {
   const nodes = [];
   const rows = [];
   for (let row = 0; row < ROWS; row++) {
-    const n = row === 7 ? 1 : row === 6 ? 2 : row === 0 ? ri(r, 2, 3) : ri(r, 2, 4);
+    const n = row === ROWS - 1 ? 1 : row === ROWS - 2 ? 2 : row === 0 ? ri(r, 2, 3) : ri(r, 2, 5);
     const list = [];
     for (let c = 0; c < n; c++) {
-      const x = n === 1 ? 210 : 70 + 280 * (c / (n - 1)) + (row < 7 ? ri(r, -12, 12) : 0);
-      const type = row === 0 ? 'FIGHT' : row === 6 ? 'EVENT' : row === 7 ? 'BOSS' : rollType(r);
-      const node = { i: nodes.length, r: row, x: Math.round(x), y: 618 - row * 74, type, next: [], done: false };
+      const x = n === 1 ? 210 : 58 + 304 * (c / (n - 1)) + (row < ROWS - 1 ? ri(r, -8, 8) : 0);
+      const type = row === 0 ? 'FIGHT' : row === ROWS - 2 ? 'EVENT' : row === ROWS - 1 ? 'BOSS' : rollType(r);
+      const node = { i: nodes.length, r: row, x: Math.round(x), y: 620 - row * 59, type, next: [], done: false };
       nodes.push(node);
       list.push(node);
     }
@@ -116,10 +119,13 @@ function genMap(r) {
     const a = rows[row], b = rows[row + 1];
     for (let j = 0; j < a.length; j++) {
       const t = a.length === 1 ? Math.floor((b.length - 1) / 2) : Math.round(j * (b.length - 1) / (a.length - 1));
-      a[j].next.push(b[t].i);
-      if (b.length > 1 && chance(r, 0.35)) {
-        const t2 = Math.min(b.length - 1, Math.max(0, t + (chance(r, 0.5) ? 1 : -1)));
-        if (t2 !== t) a[j].next.push(b[t2].i);
+      // 1-4 exits, preferring nearby columns
+      const want = Math.min(b.length, 1 + (chance(r, 0.7) ? 1 : 0) + (chance(r, 0.38) ? 1 : 0) + (chance(r, 0.18) ? 1 : 0));
+      for (const off of [0, 1, -1, 2, -2, 3, -3]) {
+        if (a[j].next.length >= want) break;
+        const t2 = t + off;
+        if (t2 < 0 || t2 >= b.length) continue;
+        if (!a[j].next.includes(b[t2].i)) a[j].next.push(b[t2].i);
       }
     }
     for (const top of b) {
@@ -243,7 +249,7 @@ function rollPotionId(r) {
 }
 
 function rollGear(r, row, bonus) {
-  const lo = Math.min(5, (row <= 2 ? 1 : row <= 4 ? 2 : 3) + bonus);
+  const lo = Math.min(5, (row <= 3 ? 1 : row <= 6 ? 2 : 3) + bonus);
   const hi = Math.min(5, lo + 1);
   const pool = [...Object.values(WEAPONS), ...Object.values(OFFHANDS), ...Object.values(ARMOR)]
     .filter(g => g.tier >= lo && g.tier <= hi);
@@ -322,7 +328,7 @@ function makeCache(row) {
 }
 
 function resolveEvent(row) {
-  if (row === 6) { G.pending = makeCampfire(); goto('CHOICE'); return; }
+  if (row === ROWS - 2) { G.pending = makeCampfire(); goto('CHOICE'); return; }
   const x = rnd(G.rng);
   if (x < 0.3) { G.pending = makeCampfire(); goto('CHOICE'); }
   else if (x < 0.5) { G.pending = makeCache(row); goto('CHOICE'); }
@@ -333,7 +339,7 @@ function resolveEvent(row) {
 
 // ---- shop (buy + sell) ----
 function shopGear(r, row) {
-  const lo = row <= 2 ? 1 : row <= 4 ? 2 : 3;
+  const lo = row <= 3 ? 1 : row <= 6 ? 2 : 3;
   const table = rnd(r) < 0.6 ? WEAPONS : rnd(r) < 0.5 ? OFFHANDS : ARMOR;
   const pool = Object.values(table).filter(g => g.tier >= lo && g.tier <= lo + 2);
   return pick(r, pool.length ? pool : Object.values(table));
@@ -447,7 +453,7 @@ export function afterCombatVictory(c) {
   }
   const options = [];
   const unknown = Object.keys(SKILLS).filter(id => !G.player.known.includes(id));
-  const skillChance = 0.22 + (c.kind === 'ambush' ? 0.15 : 0) + (c.row >= 4 ? 0.08 : 0);
+  const skillChance = 0.22 + (c.kind === 'ambush' ? 0.15 : 0) + (c.row >= 5 ? 0.08 : 0);
   if (unknown.length && chance(G.rng, skillChance)) {
     const id = pick(G.rng, unknown);
     const sk = SKILLS[id];

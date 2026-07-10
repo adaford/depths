@@ -25,12 +25,17 @@ export function initCanvas(c) {
 export function frameStart() {
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   hits.length = 0;
+  drags.length = 0;
   ctx.fillStyle = '#0b0b12';
   ctx.fillRect(0, 0, W, H);
 }
 
 export const hits = [];
 export function hit(x, y, w, h, fn) { hits.push({ x, y, w, h, fn }); }
+
+// drag zones (e.g. panning the combat camera); registered per-frame like hits
+export const drags = [];
+export function dragZone(x, y, w, h, fn) { drags.push({ x, y, w, h, fn }); }
 
 export function toXY(e) {
   const r = cnv.getBoundingClientRect();
@@ -43,6 +48,32 @@ export function tap(pt) {
     if (pt.x >= h.x && pt.x <= h.x + h.w && pt.y >= h.y && pt.y <= h.y + h.h) { h.fn(); return; }
   }
 }
+
+// A press only counts as a tap if the pointer never strays ≥10 units; otherwise
+// it feeds move deltas to whichever drag zone the press started in.
+let pStart = null, pLast = null, isDrag = false;
+export function pointerDown(e) { pStart = pLast = toXY(e); isDrag = false; }
+export function pointerMove(e) {
+  if (!pStart) return;
+  const pt = toXY(e);
+  if (!isDrag && Math.hypot(pt.x - pStart.x, pt.y - pStart.y) >= 10) isDrag = true;
+  if (isDrag) {
+    for (let i = drags.length - 1; i >= 0; i--) {
+      const d = drags[i];
+      if (pStart.x >= d.x && pStart.x <= d.x + d.w && pStart.y >= d.y && pStart.y <= d.y + d.h) {
+        d.fn(pt.x - pLast.x, pt.y - pLast.y);
+        break;
+      }
+    }
+  }
+  pLast = pt;
+}
+export function pointerUp() {
+  if (pStart && !isDrag) tap(pStart);
+  pStart = pLast = null;
+  isDrag = false;
+}
+export function pointerCancel() { pStart = pLast = null; isDrag = false; }
 
 export function rr(x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
