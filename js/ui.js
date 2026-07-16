@@ -25,12 +25,19 @@ export function initCanvas(c) {
 export function frameStart() {
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   hits.length = 0;
+  drags.length = 0;
   ctx.fillStyle = '#0b0b12';
   ctx.fillRect(0, 0, W, H);
 }
 
 export const hits = [];
 export function hit(x, y, w, h, fn) { hits.push({ x, y, w, h, fn }); }
+
+// drag zones (e.g. panning the combat camera); registered per-frame like hits.
+// A zone may also take a pinch handler: pinch(factor, midX, midY) for two-finger
+// zoom (and mouse wheel).
+export const drags = [];
+export function dragZone(x, y, w, h, fn, pinch) { drags.push({ x, y, w, h, fn, pinch }); }
 
 export function toXY(e) {
   const r = cnv.getBoundingClientRect();
@@ -40,8 +47,81 @@ export function toXY(e) {
 export function tap(pt) {
   for (let i = hits.length - 1; i >= 0; i--) {
     const h = hits[i];
-    if (pt.x >= h.x && pt.x <= h.x + h.w && pt.y >= h.y && pt.y <= h.y + h.h) { h.fn(); return; }
+    if (pt.x >= h.x && pt.x <= h.x + h.w && pt.y >= h.y && pt.y <= h.y + h.h) { h.fn(pt); return; }
   }
+}
+
+// A press only counts as a tap if the pointer never strays ≥10 units; otherwise
+// it feeds move deltas to whichever drag zone the press started in. A second
+// finger turns the gesture into a pinch for zones that registered a pinch handler.
+const pointers = new Map();
+let pStart = null, pLast = null, isDrag = false, pinch = null;
+
+function zoneAt(x, y, needPinch) {
+  for (let i = drags.length - 1; i >= 0; i--) {
+    const d = drags[i];
+    if (needPinch && !d.pinch) continue;
+    if (x >= d.x && x <= d.x + d.w && y >= d.y && y <= d.y + d.h) return d;
+  }
+  return null;
+}
+
+export function pointerDown(e) {
+  const pt = toXY(e);
+  pointers.set(e.pointerId, pt);
+  if (pointers.size === 1) {
+    pStart = pLast = pt;
+    isDrag = false;
+    pinch = null;
+  } else if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const z = zoneAt((a.x + b.x) / 2, (a.y + b.y) / 2, true);
+    pinch = z ? { fn: z.pinch, lastD: Math.hypot(a.x - b.x, a.y - b.y) } : { fn: null, lastD: 0 };
+    pStart = null; // two fingers never tap
+    isDrag = false;
+  }
+}
+export function pointerMove(e) {
+  if (!pointers.has(e.pointerId)) return;
+  const pt = toXY(e);
+  pointers.set(e.pointerId, pt);
+  if (pinch) {
+    if (pointers.size < 2 || !pinch.fn) return;
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (d > 0 && pinch.lastD > 0) pinch.fn(d / pinch.lastD, (a.x + b.x) / 2, (a.y + b.y) / 2);
+    pinch.lastD = d;
+    return;
+  }
+  if (!pStart) return;
+  if (!isDrag && Math.hypot(pt.x - pStart.x, pt.y - pStart.y) >= 10) isDrag = true;
+  if (isDrag) {
+    const z = zoneAt(pStart.x, pStart.y, false);
+    if (z) z.fn(pt.x - pLast.x, pt.y - pLast.y);
+  }
+  pLast = pt;
+}
+export function pointerUp(e) {
+  if (e && e.pointerId !== undefined) pointers.delete(e.pointerId);
+  else pointers.clear();
+  if (pinch) {
+    if (pointers.size < 2) { pinch = null; pStart = pLast = null; isDrag = false; }
+    return;
+  }
+  if (pStart && !isDrag) tap(pStart);
+  pStart = pLast = null;
+  isDrag = false;
+}
+export function pointerCancel() {
+  pointers.clear();
+  pStart = pLast = null;
+  isDrag = false;
+  pinch = null;
+}
+export function wheel(e) {
+  const pt = toXY(e);
+  const z = zoneAt(pt.x, pt.y, true);
+  if (z) z.pinch(e.deltaY < 0 ? 1.12 : 0.89, pt.x, pt.y);
 }
 
 export function rr(x, y, w, h, r) {

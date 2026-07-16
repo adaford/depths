@@ -39,23 +39,26 @@ export const POTIONS = {
   p_tonic: { id: 'p_tonic', cat: 'p', name: 'Barrier Tonic', emoji: '🧿', fx: 'block', v: 10, desc: 'Gain 10 block',            price: 22, w: 15 },
 };
 
-// Active skills. Two can be equipped (edit loadout from the map). Costs are AP + MP.
-// tgt: 'foe' tap an enemy in rng · 'tile' tap a tile · 'self'/'burst' cast instantly.
+// Active skills. Two can be equipped (edit loadout from the map, or pre-fight).
+// Costs are AP + MP; cd = cooldown in turns after casting. Ranges are chebyshev
+// (diagonals count). tgt: 'foe' tap an enemy in rng · 'tile' tap a tile ·
+// 'self'/'burst' cast instantly.
 export const SKILLS = {
-  sk_power: { id: 'sk_power', cat: 'k', name: 'Power Strike', emoji: '💥', ap: 2, mp: 3, tgt: 'foe',  rng: 1, fx: 'wx2',            desc: '2× weapon damage, melee' },
-  sk_heal:  { id: 'sk_heal',  cat: 'k', name: 'Mend',         emoji: '💚', ap: 1, mp: 5, tgt: 'self',         fx: 'heal',  v: 12,   desc: 'Restore 12 HP' },
-  sk_fire:  { id: 'sk_fire',  cat: 'k', name: 'Fireball',     emoji: '🔥', ap: 2, mp: 4, tgt: 'foe',  rng: 4, fx: 'dmg',   v: 10,   desc: '10 damage, range 4' },
-  sk_bolt:  { id: 'sk_bolt',  cat: 'k', name: 'Storm Bolt',   emoji: '⚡', ap: 2, mp: 3, tgt: 'foe',  rng: 5, fx: 'dmg',   v: 6, pierce: 1, desc: '6 damage, range 5, ignores block' },
-  sk_blink: { id: 'sk_blink', cat: 'k', name: 'Blink',        emoji: '🌀', ap: 1, mp: 2, tgt: 'tile', rng: 3, fx: 'blink',          desc: 'Teleport to a tile within 3' },
-  sk_shove: { id: 'sk_shove', cat: 'k', name: 'Shove',        emoji: '🖐️', ap: 1, mp: 2, tgt: 'foe',  rng: 1, fx: 'shove', v: 3,    desc: 'Push a foe 2 tiles — into walls or traps' },
-  sk_whirl: { id: 'sk_whirl', cat: 'k', name: 'Whirlwind',    emoji: '🌪️', ap: 2, mp: 4, tgt: 'burst', rng: 1, fx: 'whirl',         desc: 'Weapon damage to all adjacent foes' },
-  sk_wall:  { id: 'sk_wall',  cat: 'k', name: 'Bulwark',      emoji: '🛡️', ap: 1, mp: 3, tgt: 'self',         fx: 'block', v: 12,   desc: 'Gain 12 block' },
-  sk_nova:  { id: 'sk_nova',  cat: 'k', name: 'Frost Nova',   emoji: '🧊', ap: 2, mp: 5, tgt: 'burst', rng: 2, fx: 'nova',  v: 4,    desc: '4 damage + freeze foes within 2' },
-  sk_venom: { id: 'sk_venom', cat: 'k', name: 'Venom Dart',   emoji: '☠️', ap: 1, mp: 3, tgt: 'foe',  rng: 4, fx: 'venom', v: 3,    desc: '3 damage + poison (3 dmg × 3 turns)' },
+  sk_power: { id: 'sk_power', cat: 'k', name: 'Power Strike', emoji: '💥', ap: 2, mp: 3, cd: 1, tgt: 'foe',  rng: 1, fx: 'wx2',            desc: '2× weapon damage to an adjacent foe' },
+  sk_heal:  { id: 'sk_heal',  cat: 'k', name: 'Mend',         emoji: '💚', ap: 1, mp: 5, cd: 3, tgt: 'self',         fx: 'heal',  v: 12,   desc: 'Restore 12 HP' },
+  sk_fire:  { id: 'sk_fire',  cat: 'k', name: 'Fireball',     emoji: '🔥', ap: 2, mp: 4, cd: 2, tgt: 'foe',  rng: 4, fx: 'dmg',   v: 10,   desc: '10 damage at range 4' },
+  sk_bolt:  { id: 'sk_bolt',  cat: 'k', name: 'Storm Bolt',   emoji: '⚡', ap: 2, mp: 3, cd: 1, tgt: 'foe',  rng: 5, fx: 'dmg',   v: 6, pierce: 1, desc: '6 damage at range 5 — ignores block' },
+  sk_blink: { id: 'sk_blink', cat: 'k', name: 'Blink',        emoji: '🌀', ap: 1, mp: 2, cd: 3, tgt: 'tile', rng: 3, fx: 'blink',          desc: 'Teleport within 3 — never provokes' },
+  sk_shove: { id: 'sk_shove', cat: 'k', name: 'Shove',        emoji: '🖐️', ap: 1, mp: 2, cd: 1, tgt: 'foe',  rng: 1, fx: 'shove', v: 3,    desc: 'Push a foe 2 tiles — into walls or traps' },
+  sk_whirl: { id: 'sk_whirl', cat: 'k', name: 'Whirlwind',    emoji: '🌪️', ap: 2, mp: 4, cd: 2, tgt: 'burst', rng: 1, fx: 'whirl',         desc: 'Weapon damage to every adjacent foe' },
+  sk_wall:  { id: 'sk_wall',  cat: 'k', name: 'Bulwark',      emoji: '🛡️', ap: 1, mp: 3, cd: 3, tgt: 'self',         fx: 'block', v: 12,   desc: 'Gain 12 block' },
+  sk_nova:  { id: 'sk_nova',  cat: 'k', name: 'Frost Nova',   emoji: '🧊', ap: 2, mp: 5, cd: 4, tgt: 'burst', rng: 2, fx: 'nova',  v: 4,    desc: '4 damage + freeze foes within 2' },
+  sk_venom: { id: 'sk_venom', cat: 'k', name: 'Venom Dart',   emoji: '☠️', ap: 1, mp: 3, cd: 2, tgt: 'foe',  rng: 4, fx: 'venom', v: 3,    desc: '3 damage + poison (3 dmg × 3 turns)' },
 };
 
 // Monster movesets are shown to the player via the inspect (❓) overlay.
 // move types: melee (adjacent), rng (ranged attack), guard (+block), rage (+atk once per fight).
+// Every foe rolls a 0-4 turn sleep timer at battle start (see combat.js).
 // psn: [dmg, turns] poisons the player when the hit lands.
 export const MONSTERS = {
   m_rat:    { id: 'm_rat',    name: 'Giant Rat',      emoji: '🐀', hp: 13, ap: 3, def: 0, pool: 'easy',
@@ -86,7 +89,7 @@ export const MONSTERS = {
     moves: [{ t: 'melee', name: 'Slam', emoji: '🪨', dmg: 10, ap: 2 }, { t: 'guard', name: 'Harden', emoji: '🛡️', block: 8, ap: 1 }] },
   m_whelp:  { id: 'm_whelp',  name: 'Dragon Whelp',   emoji: '🐲', hp: 13, ap: 3, def: 0, pool: 'minion',
     moves: [{ t: 'melee', name: 'Nip', emoji: '🦷', dmg: 5, ap: 2 }] },
-  m_dragon: { id: 'm_dragon', name: 'Ancient Dragon', emoji: '🐉', hp: 78, ap: 4, def: 2, pool: 'boss',
+  m_dragon: { id: 'm_dragon', name: 'Ancient Dragon', emoji: '🐉', hp: 86, ap: 4, def: 2, pool: 'boss',
     moves: [{ t: 'melee', name: 'Tail Swipe', emoji: '🌪️', dmg: 11, ap: 2 }, { t: 'rng', name: 'Fire Breath', emoji: '🔥', dmg: 8, rng: 3, ap: 2 }, { t: 'rage', name: 'Enrage', emoji: '💢', atk: 2, ap: 2 }] },
 };
 

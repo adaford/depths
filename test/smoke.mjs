@@ -10,10 +10,11 @@ import {
 } from '../js/game.js';
 import {
   tick, moveTo, attackFoe, castSkill, defend, endTurn, usePotion, throwBomb,
-  openChestAt, atkTargets, skillTargets, skillFor, skillIssue,
+  openChestAt, atkTargets, skillTargets, skillFor, skillIssue, beginBattle,
+  isEngaged, EXPLORE_STEPS,
 } from '../js/combat.js';
 import { WEAPONS, OFFHANDS, ARMOR, SKILLS, RECIPES, getItem } from '../js/data.js';
-import { man, k, wallAt, chestAt, stepToward } from '../js/grid.js';
+import { dist, k, pathToward, stepToward } from '../js/grid.js';
 
 let tt = 1000;
 const counts = { crafts: 0, sold: 0, scrapped: 0, chests: 0, skillsLearned: 0 };
@@ -21,7 +22,10 @@ const counts = { crafts: 0, sold: 0, scrapped: 0, chests: 0, skillsLearned: 0 };
 function fail(msg) {
   console.error('SMOKE FAIL:', msg, JSON.stringify({
     screen: G.screen, hp: G.player && G.player.hp, cur: G.cur,
-    combat: G.combat && { turn: G.combat.turn, phase: G.combat.phase, ap: G.combat.ap, foes: G.combat.foes.map(f => [f.mid, f.hp, f.x, f.y]) },
+    combat: G.combat && {
+      turn: G.combat.turn, phase: G.combat.phase, ap: G.combat.ap, w: G.combat.w, h: G.combat.h,
+      foes: G.combat.foes.map(f => [f.mid, f.hp, f.x, f.y, f.awake ? 'A' : 'z']),
+    },
   }));
   process.exit(1);
 }
@@ -39,15 +43,20 @@ function checkInvariants() {
   const c = G.combat;
   if (c && G.screen === 'COMBAT') {
     if (c.ap < 0) fail('negative AP');
-    if (c.turn > 80) fail('combat stalled past 80 turns');
-    const occ = new Set([k(c.px, c.py)]);
-    if (wallAt(c, c.px, c.py) || chestAt(c, c.px, c.py)) fail('player inside obstacle');
+    if (c.turn > 250) fail('combat stalled past 250 turns');
+    const fs = new Set(c.floors);
+    const occ = new Set([c.py * c.w + c.px]);
+    if (!fs.has(c.py * c.w + c.px)) fail('player standing in rock');
+    const statics = new Set([...c.obs, ...c.chests].map(o => o.y * c.w + o.x));
+    if (statics.has(c.py * c.w + c.px)) fail('player inside obstacle');
     for (const f of c.foes) {
       if (f.dead) continue;
-      if (f.x < 0 || f.x > 6 || f.y < 0 || f.y > 6) fail('foe out of bounds');
-      if (wallAt(c, f.x, f.y) || chestAt(c, f.x, f.y)) fail('foe inside obstacle');
-      if (occ.has(k(f.x, f.y))) fail('units overlap');
-      occ.add(k(f.x, f.y));
+      const i = f.y * c.w + f.x;
+      if (f.x < 0 || f.x >= c.w || f.y < 0 || f.y >= c.h) fail('foe out of bounds');
+      if (!fs.has(i)) fail('foe standing in rock');
+      if (statics.has(i)) fail('foe inside obstacle');
+      if (occ.has(i)) fail('units overlap');
+      occ.add(i);
     }
   }
 }
@@ -66,7 +75,6 @@ function equippedFor(cat) {
 
 function manageBag() {
   const p = G.player;
-  // equip upgrades
   for (let guard = 0; guard < 20; guard++) {
     let bestI = -1, bestGain = 0.01;
     p.bag.forEach((id, i) => {
@@ -77,7 +85,6 @@ function manageBag() {
     if (bestI < 0) break;
     equipFromBag(bestI);
   }
-  // scrap the junk when the bag is getting full
   while (p.bag.length > 7) {
     let worstI = 0, worst = Infinity;
     p.bag.forEach((id, i) => {
@@ -87,13 +94,15 @@ function manageBag() {
     scrapFromBag(worstI);
     counts.scrapped++;
   }
-  // craft an upgrade when scrap allows (prefer expensive = stronger)
   for (let guard = 0; guard < 6; guard++) {
     let bestI = -1, bestGain = 0.5, bestCost = 0;
     RECIPES.forEach((rec, i) => {
       if (craftIssue(rec)) return;
       const out = getItem(rec.out);
-      if (out.cat === 'k') { if (G.player.scrap >= rec.scrap + 6) { if (rec.scrap > bestCost) { bestI = i; bestCost = rec.scrap; bestGain = 99; } } return; }
+      if (out.cat === 'k') {
+        if (G.player.scrap >= rec.scrap + 6 && rec.scrap > bestCost) { bestI = i; bestCost = rec.scrap; bestGain = 99; }
+        return;
+      }
       if (out.cat === 'p') return;
       const gain = gearScore(out) - gearScore(equippedFor(out.cat));
       if (gain > bestGain) { bestGain = gain; bestI = i; bestCost = rec.scrap; }
@@ -104,8 +113,7 @@ function manageBag() {
     counts.crafts++;
     if (wasSkill) counts.skillsLearned++;
   }
-  // craft potions with leftover scrap
-  while (G.player.scrap >= 10 && G.player.potions.length < POT_MAX) {
+  while (G.player.scrap >= 12 && G.player.potions.length < POT_MAX) {
     const i = RECIPES.findIndex(r => r.out === 'p_heal');
     if (i < 0 || craftIssue(RECIPES[i])) break;
     craftItem(i);
@@ -114,8 +122,12 @@ function manageBag() {
 }
 
 // ---- combat policy ----
+let botC = null, botPath = [];
+
 function playCombat() {
   const c = G.combat;
+  if (botC !== c) { botC = c; botPath = []; }
+  if (c.phase === 'prep') { beginBattle(); return; }
   if (c.phase === 'enemy') {
     c._due = tt;
     tick(tt);
@@ -129,8 +141,7 @@ function playCombat() {
 
   const foes = c.foes.map((f, i) => ({ f, i })).filter(x => !x.f.dead);
   if (!foes.length) fail('player phase with no live foes');
-  const dist = (f) => man(c.px, c.py, f.x, f.y);
-  const nearest = foes.reduce((a, b) => (dist(a.f) <= dist(b.f) ? a : b));
+  const dd = (f) => dist(c.px, c.py, f.x, f.y);
 
   // skills
   for (const slot of [0, 1]) {
@@ -142,12 +153,12 @@ function playCombat() {
     }
     if (sk.fx === 'block' || sk.fx === 'blink' || sk.fx === 'shove') continue; // situational, skip
     if (sk.tgt === 'burst') {
-      if (foes.filter(x => dist(x.f) <= sk.rng).length >= 2) { castSkill(slot); return; }
+      if (foes.filter(x => dd(x.f) <= sk.rng).length >= 2) { castSkill(slot); return; }
       continue;
     }
     if (sk.tgt === 'foe') {
       const ts = skillTargets(slot);
-      if (ts.length && P.mp >= sk.mp + 3) { // keep a little mana buffer
+      if (ts.length && P.mp >= sk.mp + 3) {
         const t = ts.map(i => c.foes[i]).reduce((a, b) => (a.hp <= b.hp ? a : b));
         castSkill(slot, t.x, t.y);
         return;
@@ -164,40 +175,61 @@ function playCombat() {
   }
 
   // bomb a distant foe if we can't reach anyone
-  if (pi('p_bomb') >= 0 && c.ap >= 1 && foes.some(x => dist(x.f) <= 3)) {
+  if (pi('p_bomb') >= 0 && c.ap >= 1 && foes.some(x => dd(x.f) <= 3)) {
     usePotion(pi('p_bomb'));
-    const bt = foes.filter(x => dist(x.f) <= 3);
+    const bt = foes.filter(x => dd(x.f) <= 3);
     if (bt.length && c.mode === 'bomb') { throwBomb(bt[0].i); return; }
   }
 
   // open an adjacent chest (free value)
   for (const ch of c.chests) {
-    if (!ch.opened && man(c.px, c.py, ch.x, ch.y) === 1 && c.ap >= 1) {
+    if (!ch.opened && dist(c.px, c.py, ch.x, ch.y) === 1 && c.ap >= 1) {
       openChestAt(ch.x, ch.y);
       counts.chests++;
       return;
     }
   }
 
-  // walk one BFS step toward the nearest foe (accept a trap step only when healthy)
-  if (c.ap >= 1) {
-    const step = stepToward(c, { x: c.px, y: c.py }, nearest.f.x, nearest.f.y);
-    if (step) {
-      const trapped = c.traps.some(tr => !tr.sprung && tr.x === step.x && tr.y === step.y);
-      if (!trapped || P.hp > P.maxHp * 0.6) { moveTo(step.x, step.y); return; }
+  const engaged = isEngaged();
+  if (engaged) {
+    // fight locally: one BFS step toward the closest reachable foe
+    if (c.ap >= 1) {
+      const byDist = [...foes].sort((a, b) => dd(a.f) - dd(b.f));
+      for (const t of byDist) {
+        const step = stepToward(c, { x: c.px, y: c.py }, t.f.x, t.f.y);
+        if (step) { moveTo(step.x, step.y); return; }
+      }
     }
+    if (c.ap >= 1 && !c.defended && foes.some(x => dd(x.f) <= 3)) { defend(); return; }
+    endTurn();
+    return;
   }
 
-  // nothing better to do: brace if threatened, then end
-  if (c.ap >= 1 && !c.defended && foes.some(x => dist(x.f) <= 3)) { defend(); return; }
-  endTurn();
+  // exploring: stride along a cached path toward the closest reachable foe
+  if (!botPath.length) {
+    const byDist = [...foes].sort((a, b) => dd(a.f) - dd(b.f));
+    for (const t of byDist) {
+      const p = pathToward(c, { x: c.px, y: c.py }, t.f.x, t.f.y);
+      if (p && p.length) { botPath = p; break; }
+    }
+    if (!botPath.length) fail('exploring but no path to any foe');
+  }
+  const stepIdx = Math.min(EXPLORE_STEPS - 1, botPath.length - 1);
+  const [tx2, ty2] = botPath[stepIdx];
+  const wasAt = c.px * 10000 + c.py;
+  moveTo(tx2, ty2);
+  if (c.px * 10000 + c.py !== wasAt) { botPath = botPath.slice(stepIdx + 1); return; }
+  const [sx2, sy2] = botPath[0];
+  moveTo(sx2, sy2);
+  if (c.px * 10000 + c.py !== wasAt) { botPath = botPath.slice(1); return; }
+  botPath = []; // recompute next iteration
 }
 
 // ---- choice policy ----
 function actScore(o) {
   const P = G.player;
   const a = o.act.t === 'buy' || o.act.t === 'scrapbuy' ? o.act.inner : o.act;
-  if (o.act.t === 'buy' && P.gold < o.act.price + 15) return -1; // keep a cushion
+  if (o.act.t === 'buy' && P.gold < o.act.price + 15) return -1;
   if (o.act.t === 'scrapbuy' && P.scrap < o.act.scrap + 4) return -1;
   if (a.t === 'skill') return 6;
   if (a.t === 'gear') {
@@ -229,12 +261,10 @@ function playChoice() {
 // ---- shop policy ----
 function playShop() {
   const P = G.player;
-  // sell junk (anything clearly worse than equipped)
   for (let i = P.bag.length - 1; i >= 0; i--) {
     const g = getItem(P.bag[i]);
     if (gearScore(g) <= gearScore(equippedFor(g.cat))) { shopSell(i); counts.sold++; }
   }
-  // buy potions and upgrades
   for (let i = 0; i < G.shop.stock.length; i++) {
     const s = G.shop.stock[i];
     if (shopBuyIssue(i)) continue;
@@ -267,7 +297,7 @@ for (let run = 0; run < RUNS; run++) {
   newRun();
   let steps = 0;
   while (G.screen !== 'GAMEOVER' && G.screen !== 'VICTORY') {
-    if (++steps > 30000) fail(`run ${run} stuck on screen ${G.screen}`);
+    if (++steps > 60000) fail(`run ${run} stuck on screen ${G.screen}`);
     if (G.screen === 'MAP') {
       manageBag();
       const rs = reachable();
@@ -296,7 +326,7 @@ for (let run = 0; run < RUNS; run++) {
 
 const rate = Math.round(100 * wins / RUNS);
 console.log(`smoke OK — ${RUNS} runs: ${wins} wins (${rate}%), ${deaths} deaths, avg floor ${(floors / RUNS).toFixed(1)}`);
-console.log(`  fights ${fightsTotal}, avg enemy turns/fight ${(turnsTotal / Math.max(1, fightsTotal)).toFixed(1)}`);
+console.log(`  fights ${fightsTotal}, avg engaged turns/fight ${(turnsTotal / Math.max(1, fightsTotal)).toFixed(1)}`);
 console.log(`  crafts ${counts.crafts} (skills ${counts.skillsLearned}), sold ${counts.sold}, scrapped ${counts.scrapped}, chests ${counts.chests}`);
 if (rate < 5 || rate > 70) {
   console.error(`SMOKE WARN: win rate ${rate}% far outside the 15–45% target band`);

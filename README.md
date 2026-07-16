@@ -1,12 +1,22 @@
 # ⚔️ DEPTHS — a pocket tactics roguelike
 
-Climb 8 floors of a branching dungeon. Choose your path (fights, ❓ events,
-treasure, merchants), then battle on a 7×7 grid: spend AP to move, strike with
-your weapon, cast the two skills you equipped, drink potions, spring traps on
-your foes, and loot chests mid-fight. Tap any enemy to see its full moveset
-before it acts. Every foe drops gear — equip it, sell it, or break it into
-scrap and craft weapons, armor, potions, and new skills. Slay the dragon on
-floor 8. Death is permanent. Runs are short.
+Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
+❓ events, treasure, merchants), then delve VAST hexagonal caverns — every
+battle-map is a freshly generated labyrinth of halls, winding corridors, and
+caves, up to a hundred hexes across. Scout before you commit: scroll the whole
+map (pinch to zoom, drag to pan), tap enemies to see their walk range and
+full movesets (red flash = they can reach you), and swap gear and skills.
+Every enemy dozes on its own 0-4 turn timer — sneak while they sleep, and
+watch reinforcements wake mid-fight. While nothing threatens you, explore
+freely with long strides and a compass pointing to the nearest foe; the moment
+something stirs, the AP economy kicks in — move hex by hex (green shows your
+reach), strike any of the 6 directions, and mind opportunity attacks when you
+flee melee. Rock walls, boulders, urns, and traps all have HP: dig shortcuts,
+dismantle spikes, smash pottery for gold. Cast your two equipped skills
+(mana + cooldowns), shove foes into traps, loot chests mid-fight. Enemies may
+start alert or asleep, clustered room by room. Every foe drops gear — equip
+it, sell it, or break it into scrap and craft weapons, armor, potions, and new
+skills. Slay the dragon on floor 10. Death is permanent.
 
 **Play it:** https://adaford.github.io/depths/
 

@@ -1,4 +1,6 @@
 // All screen rendering. Immediate-mode: each frame redraws and re-registers tap targets.
+// Combat draws a pointy-top hex grid through a scrollable camera; taps on the board
+// are converted pixel→hex here and routed to combat.tapBoard.
 import * as U from './ui.js';
 import {
   G, canContinue, continueRun, newRun, reachable, enterNode,
@@ -10,28 +12,38 @@ import {
   BAG_MAX,
 } from './game.js';
 import {
-  FX, tapBoard, setMode, defend, endTurn, usePotion, closeInfo,
+  FX, AGRO, EXPLORE_STEPS, tapBoard, setMode, defend, endTurn, usePotion, closeInfo,
   atkTargets, skillTargets, skillFor, skillIssue, bombTargets, castSkill,
+  beginBattle, structTargets, foeReach, foeThreatens, isEngaged, nearestFoe,
 } from './combat.js';
 import { MONSTERS, POTIONS, SKILLS, RECIPES, NODE_EMOJI, getItem } from './data.js';
-import { reach, k, CW, CH, wallAt } from './grid.js';
+import { reach, k, dist, toPixel, fromPixel, boardPx, idx } from './grid.js';
 
-const GOLD = '#e8b45a', DIM = '#8a8798', TXT = '#e8e4da', RED = '#ff6b5e', BLU = '#7fc7ff', PUR = '#b39dff';
-const T = 56, BX = 14, BY = 88; // board tile size + origin
+const GOLD = '#e8b45a', DIM = '#8a8798', TXT = '#e8e4da', RED = '#ff6b5e', BLU = '#7fc7ff', PUR = '#b39dff', GRN = '#7fe08a';
+
+// combat board viewport + camera (module-local render state, never saved)
+const S = 30; // base hex radius; hex width ≈ 52px at zoom 1
+const VX = 4, VY = 40, VW = 412, VH = 474;
+let zoom = 1; // pinch/wheel zoom, 0.5–1.6
+const se = () => Math.max(15, Math.min(48, S * zoom));
+let camX = 0, camY = 0, camFree = false, camFocusKey = '', lastC = null;
+let fsCache = null, fsKey = -1; // Set of floor indexes, rebuilt when digging changes it
+let aInfo = null; // action detail overlay: {t:'atk'} | {t:'sk',slot} | {t:'def'}
 
 let invPage = 0, skillPage = 0, craftPage = 0, sellPage = 0;
 
-// convert combat events (tile coords) into floating numbers at screen positions
-const FXC = { dmg: '#ffd76a', hurt: '#ff7b6b', blk: BLU, heal: '#7fe08a', psn: '#a8e06a', gold: GOLD, mp: PUR, buff: '#ff9b6b' };
+// convert combat events (hex coords) into floating numbers at screen positions
+const FXC = { dmg: '#ffd76a', hurt: '#ff7b6b', blk: BLU, heal: GRN, psn: '#a8e06a', gold: GOLD, mp: PUR, buff: '#ff9b6b' };
 function drainFX() {
   for (const ev of FX.splice(0)) {
-    U.addFloat(BX + ev.tx * T + T / 2, BY + ev.ty * T + 12, ev.v, FXC[ev.c] || TXT);
+    const [px, py] = toPixel(ev.tx, ev.ty, se());
+    U.addFloat(VX + px - camX, VY + py - camY - 12, ev.v, FXC[ev.c] || TXT);
   }
 }
 
 export function render(t, dt) {
   U.frameStart();
-  if (G.screen !== 'COMBAT') { FX.length = 0; U.floats.length = 0; }
+  if (G.screen !== 'COMBAT') { FX.length = 0; U.floats.length = 0; aInfo = null; }
   drainFX();
   if (G.screen === 'TITLE') title();
   else if (G.screen === 'MAP') map(t);
@@ -48,16 +60,17 @@ export function render(t, dt) {
 
 function header(showMenu) {
   const p = G.player;
-  U.txt(`Fl ${G.stats.floor}/8`, 14, 26, 14, DIM, 'left');
-  U.txt(`❤️${p.hp}/${p.maxHp}`, 130, 26, 14, TXT);
-  U.txt(`🔮${p.mp}`, 215, 26, 14, PUR);
+  U.txt(`Fl ${G.stats.floor}/10`, 14, 26, 14, DIM, 'left');
+  U.txt(`❤️${p.hp}/${p.maxHp}`, 132, 26, 14, TXT);
+  U.txt(`🔮${p.mp}`, 216, 26, 14, PUR);
   U.txt(`💰${p.gold}`, 278, 26, 14, GOLD);
   U.txt(`🔩${p.scrap}`, 340, 26, 14, DIM);
   if (showMenu) U.button(374, 6, 38, 38, '≡', () => { G.back = 'MAP'; goto('TITLE'); }, { size: 20 });
 }
 
 function backBtn() {
-  U.button(110, 716, 200, 60, '⬅ Back to Map', () => goto('MAP'), { size: 17 });
+  const toCombat = G.ret === 'COMBAT' && G.combat;
+  U.button(110, 716, 200, 60, toCombat ? '⚔️ To Battle' : '⬅ Back to Map', () => goto(toCombat ? 'COMBAT' : 'MAP'), { size: 17 });
 }
 
 function pager(page, pages, set) {
@@ -72,10 +85,10 @@ function pager(page, pages, set) {
 // ---------- map ----------
 function map(t) {
   header(true);
-  U.txt('Tap a glowing node to travel', 210, 56, 12, DIM);
+  U.txt('Tap a glowing node to travel', 210, 54, 12, DIM);
   const nodes = G.map.nodes;
   const reachIds = reachable();
-  U.ctx.lineWidth = 3;
+  U.ctx.lineWidth = 2;
   for (const n of nodes) {
     for (const j of n.next) {
       const m = nodes[j];
@@ -84,31 +97,31 @@ function map(t) {
       const ux = dx / len, uy = dy / len;
       U.ctx.strokeStyle = (n.i === G.cur && reachIds.includes(j)) ? GOLD : '#2b2b40';
       U.ctx.beginPath();
-      U.ctx.moveTo(n.x + ux * 26, n.y + uy * 26);
-      U.ctx.lineTo(m.x - ux * 26, m.y - uy * 26);
+      U.ctx.moveTo(n.x + ux * 21, n.y + uy * 21);
+      U.ctx.lineTo(m.x - ux * 21, m.y - uy * 21);
       U.ctx.stroke();
     }
   }
   if (G.cur < 0) {
     for (const i of reachIds) {
       const m = nodes[i];
-      const dx = m.x - 210, dy = m.y - 672;
+      const dx = m.x - 210, dy = m.y - 674;
       const len = Math.hypot(dx, dy) || 1;
       const ux = dx / len, uy = dy / len;
       U.ctx.strokeStyle = GOLD;
       U.ctx.beginPath();
-      U.ctx.moveTo(210 + ux * 24, 672 + uy * 24);
-      U.ctx.lineTo(m.x - ux * 26, m.y - uy * 26);
+      U.ctx.moveTo(210 + ux * 22, 674 + uy * 22);
+      U.ctx.lineTo(m.x - ux * 21, m.y - uy * 21);
       U.ctx.stroke();
     }
-    U.txt('🤺', 210, 672, 28);
+    U.txt('🤺', 210, 674, 26);
   }
-  const pulse = 2 + Math.sin(t / 220) * 1.5;
+  const pulse = 1.8 + Math.sin(t / 220) * 1.3;
   for (const n of nodes) {
-    const rad = n.type === 'BOSS' ? 28 : 23;
+    const rad = n.type === 'BOSS' ? 26 : 20;
     const isReach = reachIds.includes(n.i);
     const isCur = n.i === G.cur;
-    if (n.done && !isCur) U.ctx.globalAlpha = 0.45;
+    if (n.done && !isCur) U.ctx.globalAlpha = 0.4;
     U.ctx.beginPath();
     U.ctx.arc(n.x, n.y, rad, 0, Math.PI * 2);
     U.ctx.fillStyle = '#1d1d2c';
@@ -116,175 +129,414 @@ function map(t) {
     U.ctx.lineWidth = isReach ? pulse : 2;
     U.ctx.strokeStyle = isCur ? '#ffffff' : isReach ? GOLD : '#3a3a4f';
     U.ctx.stroke();
-    U.txt(NODE_EMOJI[n.type], n.x, n.y + 1, n.type === 'BOSS' ? 28 : 21);
+    U.txt(NODE_EMOJI[n.type], n.x, n.y + 2, n.type === 'BOSS' ? 25 : 18);
     U.ctx.globalAlpha = 1;
-    if (isCur) U.txt('🤺', n.x, n.y - rad - 14, 20);
-    if (isReach) U.hit(n.x - 30, n.y - 30, 60, 60, () => enterNode(n.i));
+    if (isCur) U.txt('🤺', n.x, n.y - rad - 12, 18);
+    if (isReach) U.hit(n.x - 29, n.y - 29, 58, 58, () => enterNode(n.i));
   }
   const w = getPrimary(), s = getSecondary(), a = getArmor();
-  U.button(14, 716, 122, 60, '🎒', () => { invPage = 0; goto('INV'); }, { size: 22, sub: `${w.emoji}${s.emoji}${a.emoji} Gear` });
-  U.button(146, 716, 128, 60, '✨', () => { skillPage = 0; goto('SKILLS'); }, { size: 22, sub: 'Skills' });
+  U.button(14, 716, 122, 60, '🎒', () => { invPage = 0; G.ret = 'MAP'; goto('INV'); }, { size: 22, sub: `${w.emoji}${s.emoji}${a.emoji} Gear` });
+  U.button(146, 716, 128, 60, '✨', () => { skillPage = 0; G.ret = 'MAP'; goto('SKILLS'); }, { size: 22, sub: 'Skills' });
   U.button(284, 716, 122, 60, '🔨', () => { craftPage = 0; goto('CRAFT'); }, { size: 22, sub: `Craft ${G.player.scrap}🔩` });
 }
 
-// ---------- tactical combat ----------
-const tileXY = (x, y) => [BX + x * T, BY + y * T];
+// ---------- tactical combat (hex) ----------
+function hexPath(cx, cy, rad) {
+  U.ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    const px = cx + rad * Math.cos(a), py = cy + rad * Math.sin(a);
+    if (i) U.ctx.lineTo(px, py);
+    else U.ctx.moveTo(px, py);
+  }
+  U.ctx.closePath();
+}
+
+function shortSkillStat(sk, w) {
+  if (sk.fx === 'wx2') return `${w.dmg * 2} dmg`;
+  if (sk.fx === 'dmg') return `${sk.v} dmg${sk.pierce ? ' pierce' : ''}`;
+  if (sk.fx === 'venom') return `${sk.v} dmg + poison`;
+  if (sk.fx === 'whirl') return `${w.dmg} dmg all adjacent`;
+  if (sk.fx === 'nova') return `${sk.v} dmg + freeze`;
+  if (sk.fx === 'shove') return `${sk.v} dmg + push 2`;
+  if (sk.fx === 'heal') return `heal ${sk.v}`;
+  if (sk.fx === 'block') return `+${sk.v} block`;
+  return 'teleport';
+}
+
+function cycleFoe() {
+  const c = G.combat;
+  const alive = c.foes.map((f, i) => ({ f, i })).filter(x => !x.f.dead);
+  if (!alive.length) return;
+  const cur = alive.findIndex(x => x.i === c.sel);
+  c.sel = alive[(cur + 1) % alive.length].i;
+}
 
 function combat(t) {
   const c = G.combat;
   if (!c) { goto('MAP'); return; }
   const P = G.player, w = getPrimary();
+  const prep = c.phase === 'prep';
   const myTurn = c.phase === 'player';
+  const engaged = isEngaged();
 
-  // top bars
-  U.bar(14, 10, 160, 17, P.hp / P.maxHp, '#4f9d57', `${P.hp}/${P.maxHp}`);
-  U.bar(14, 32, 110, 12, P.mp / P.maxMp, '#6a5bbf', `${P.mp}/${P.maxMp} MP`);
-  if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, 196, 20, 14, BLU, 'left');
-  if (c.pPsnT > 0) U.txt(`☠️${c.pPsnT}`, 196, 38, 12, '#a8e06a', 'left');
-  U.txt(c.kind === 'boss' ? '🐉 BOSS' : c.kind === 'ambush' ? '☠️ AMBUSH' : `Turn ${c.turn}`, 406, 18, 13, c.kind === 'fight' ? DIM : GOLD, 'right', c.kind !== 'fight');
-  U.txt(`💰${P.gold}`, 406, 38, 13, GOLD, 'right');
+  // compact top bar
+  U.bar(10, 5, 148, 15, P.hp / P.maxHp, '#4f9d57', `${P.hp}/${P.maxHp}`);
+  U.bar(10, 23, 106, 11, P.mp / P.maxMp, '#6a5bbf', `${P.mp} MP`);
+  if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, 168, 13, 13, BLU, 'left');
+  if (c.pPsnT > 0) U.txt(`☠️${c.pPsn}×${c.pPsnT}`, 168, 30, 12, '#a8e06a', 'left');
+  U.txt(prep ? '🔭 SCOUT' : !engaged ? '🔦 EXPLORE' : c.kind === 'boss' ? '🐉 BOSS' : c.kind === 'ambush' ? '☠️ AMBUSH' : `Turn ${c.turn}`,
+    412, 12, 13, prep || !engaged ? BLU : c.kind === 'fight' ? DIM : GOLD, 'right', true);
+  U.txt(`💰${P.gold}`, 412, 30, 13, GOLD, 'right');
 
-  // move reach + targets for the current mode
-  const reachMap = (myTurn && c.mode === 'move') ? reach(c, c.px, c.py, c.ap) : null;
+  // camera: follow the player / acting foe / inspected foe, unless dragged away
+  if (G.combat !== lastC) { lastC = G.combat; camFree = false; camFocusKey = ''; fsCache = null; }
+  if (!fsCache || fsKey !== c.floors.length) { fsCache = new Set(c.floors); fsKey = c.floors.length; }
+  const actingFoe = c.phase === 'enemy' && c.foes[c.ei] && !c.foes[c.ei].dead && c.foes[c.ei].awake ? c.foes[c.ei] : null;
+  const selFoe = ((myTurn || prep) && c.sel >= 0 && c.foes[c.sel] && !c.foes[c.sel].dead) ? c.foes[c.sel] : null;
+  const focus = actingFoe || selFoe || { x: c.px, y: c.py };
+  const fkey = `${focus.x},${focus.y}:${c.phase}`;
+  if (fkey !== camFocusKey) { camFocusKey = fkey; camFree = false; }
+  const Z = se(), K = Z / S; // effective hex radius + visual scale factor
+  const [fpx, fpy] = toPixel(focus.x, focus.y, Z);
+  const [BW, BH] = boardPx(c, Z);
+  const maxCX = Math.max(0, BW - VW), maxCY = Math.max(0, BH - VH);
+  if (!camFree) {
+    const wantX = Math.max(0, Math.min(maxCX, fpx - VW / 2));
+    const wantY = Math.max(0, Math.min(maxCY, fpy - VH / 2));
+    camX += (wantX - camX) * 0.22;
+    camY += (wantY - camY) * 0.22;
+    if (Math.abs(wantX - camX) < 1) camX = wantX;
+    if (Math.abs(wantY - camY) < 1) camY = wantY;
+  }
+  camX = Math.max(0, Math.min(maxCX, camX));
+  camY = Math.max(0, Math.min(maxCY, camY));
+  U.dragZone(VX, VY, VW, VH, (dx, dy) => {
+    camX = Math.max(0, Math.min(maxCX, camX - dx));
+    camY = Math.max(0, Math.min(maxCY, camY - dy));
+    camFree = true;
+  }, (factor, mx, my) => {
+    // pinch/wheel zoom around the gesture midpoint
+    const old = se();
+    zoom = Math.max(0.5, Math.min(1.6, zoom * factor));
+    const neu = se();
+    if (neu === old) return;
+    const wx = (camX + mx - VX) / old, wy = (camY + my - VY) / old;
+    camX = wx * neu - (mx - VX);
+    camY = wy * neu - (my - VY);
+    camFree = true;
+  });
+
+  // targeting context for the current mode
+  const reachMap = (myTurn && c.mode === 'move') ? reach(c, c.px, c.py, engaged ? c.ap : EXPLORE_STEPS) : null;
   const aTargets = (myTurn && c.mode === 'atk') ? atkTargets() : [];
+  const stStruct = (myTurn && c.mode === 'atk') ? structTargets() : [];
+  const stSet = new Set(stStruct.map(q => k(q.x, q.y)));
   const slot = c.mode === 'sk0' ? 0 : c.mode === 'sk1' ? 1 : -1;
   const sTargets = (myTurn && slot >= 0) ? skillTargets(slot) : [];
   const sSkill = slot >= 0 ? skillFor(slot) : null;
+  const blinkSet = sSkill && sSkill.tgt === 'tile' ? new Set(sTargets.map(q => k(q.x, q.y))) : null;
   const bTargets = (myTurn && c.mode === 'bomb') ? bombTargets() : [];
+  const rangeTint =
+    c.mode === 'atk' ? { rng: w.rng, color: 'rgba(255,107,94,0.2)' } :
+    sSkill && sSkill.tgt === 'foe' ? { rng: sSkill.rng, color: 'rgba(179,157,255,0.2)' } :
+    c.mode === 'bomb' && c.potIdx >= 0 ? { rng: 3, color: 'rgba(255,171,74,0.2)' } : null;
+
+  // foe walk-range preview: the inspected foe, or whoever is taking its turn
+  let fvFoe = null, fvReach = null, fvThreat = false;
+  const fvIdx = actingFoe ? c.ei : selFoe ? c.sel : -1;
+  if (fvIdx >= 0) {
+    fvFoe = c.foes[fvIdx];
+    const budget = actingFoe && c.eap >= 0 ? c.eap : MONSTERS[fvFoe.mid].ap;
+    fvReach = foeReach(fvIdx, budget);
+    fvThreat = foeThreatens(fvIdx, budget, fvReach);
+  }
 
   // board
-  U.panel(BX - 3, BY - 3, CW * T + 6, CH * T + 6, 8, '#0a0a10', '#33334a');
-  for (let y = 0; y < CH; y++) {
-    for (let x = 0; x < CW; x++) {
-      const [px, py] = tileXY(x, y);
-      U.ctx.fillStyle = (x + y) % 2 ? '#14141d' : '#17171f';
-      U.ctx.fillRect(px, py, T, T);
-      if (wallAt(c, x, y)) {
-        U.ctx.fillStyle = '#0c0c12';
-        U.ctx.fillRect(px, py, T, T);
-        U.txt('🪨', px + T / 2, py + T / 2 + 1, 26);
-      } else if (reachMap && reachMap.has(k(x, y))) {
-        U.ctx.fillStyle = 'rgba(232,180,90,0.2)';
-        U.ctx.fillRect(px + 2, py + 2, T - 4, T - 4);
+  U.ctx.save();
+  U.rr(VX, VY, VW, VH, 10);
+  U.ctx.clip();
+  U.ctx.fillStyle = '#07070c';
+  U.ctx.fillRect(VX, VY, VW, VH);
+  const dugSet = new Set(c.dug);
+  const scr = (x, y) => { const [px, py] = toPixel(x, y, Z); return [VX + px - camX, VY + py - camY]; };
+  const onScreen = (sx, sy) => sx > VX - Z && sx < VX + VW + Z && sy > VY - Z && sy < VY + VH + Z;
+  const y0v = Math.max(0, Math.floor((camY - 2 * Z) / (1.5 * Z)));
+  const y1v = Math.min(c.h - 1, Math.ceil((camY + VH) / (1.5 * Z)));
+  const x0v = Math.max(0, Math.floor((camX - 2 * Z) / (Math.sqrt(3) * Z)) - 1);
+  const x1v = Math.min(c.w - 1, Math.ceil((camX + VW) / (Math.sqrt(3) * Z)));
+  const isFloorAt = (x, y) => x >= 0 && x < c.w && y >= 0 && y < c.h && fsCache.has(y * c.w + x);
+  const hexNbs = (x, y) => (y & 1)
+    ? [[x + 1, y], [x - 1, y], [x, y - 1], [x, y + 1], [x + 1, y - 1], [x + 1, y + 1]]
+    : [[x + 1, y], [x - 1, y], [x, y - 1], [x, y + 1], [x - 1, y - 1], [x - 1, y + 1]];
+  for (let y = y0v; y <= y1v; y++) {
+    for (let x = x0v; x <= x1v; x++) {
+      const i = y * c.w + x;
+      const [sx, sy] = scr(x, y);
+      if (!fsCache.has(i)) {
+        // solid rock: draw a face only where it borders carved floor
+        if (!hexNbs(x, y).some(([nx, ny]) => isFloorAt(nx, ny))) continue;
+        hexPath(sx, sy, Z - 1);
+        U.ctx.fillStyle = '#1c1c29';
+        U.ctx.fill();
+        U.ctx.strokeStyle = '#2a2a3d';
+        U.ctx.lineWidth = 1;
+        U.ctx.stroke();
+        const dmgHp = c.wallDmg[i];
+        if (dmgHp !== undefined) U.bar(sx - 18 * K, sy + 12 * K, 36 * K, 4, dmgHp / 12, '#8a6f3a');
+        if (stSet.has(k(x, y))) {
+          hexPath(sx, sy, Z - 4);
+          U.ctx.strokeStyle = 'rgba(255,107,94,0.75)';
+          U.ctx.lineWidth = 2;
+          U.ctx.stroke();
+        }
+        continue;
       }
-      if (sSkill && sSkill.tgt === 'tile' && sTargets.some(q => q.x === x && q.y === y)) {
-        U.ctx.fillStyle = 'rgba(179,157,255,0.18)';
-        U.ctx.fillRect(px + 2, py + 2, T - 4, T - 4);
+      hexPath(sx, sy, Z - 1);
+      U.ctx.fillStyle = dugSet.has(i) ? '#221d18' : (x + y) % 2 ? '#15151f' : '#181823';
+      U.ctx.fill();
+      U.ctx.strokeStyle = '#20202e';
+      U.ctx.lineWidth = 1;
+      U.ctx.stroke();
+      const dd = dist(c.px, c.py, x, y);
+      if (rangeTint && dd <= rangeTint.rng && dd > 0) {
+        hexPath(sx, sy, Z - 2);
+        U.ctx.fillStyle = rangeTint.color;
+        U.ctx.fill();
       }
-      U.hit(px, py, T, T, () => tapBoard(x, y));
+      if (fvReach && fvReach.has(k(x, y))) {
+        hexPath(sx, sy, Z - 2);
+        U.ctx.fillStyle = 'rgba(255,140,60,0.22)';
+        U.ctx.fill();
+      }
+      if (reachMap && reachMap.has(k(x, y))) {
+        hexPath(sx, sy, Z - 3);
+        U.ctx.fillStyle = 'rgba(90,200,110,0.18)';
+        U.ctx.fill();
+        U.ctx.strokeStyle = 'rgba(127,224,138,0.55)';
+        U.ctx.lineWidth = 1.5;
+        U.ctx.stroke();
+      }
+      if (blinkSet && blinkSet.has(k(x, y))) {
+        hexPath(sx, sy, Z - 2);
+        U.ctx.fillStyle = 'rgba(179,157,255,0.25)';
+        U.ctx.fill();
+      }
     }
   }
-  // traps / chests / ground items
+  // obstacles / traps / chests / ground items
+  for (const o of c.obs) {
+    const [sx, sy] = scr(o.x, o.y);
+    if (!onScreen(sx, sy)) continue;
+    U.txt(o.e, sx, sy, 26 * K);
+    if (o.hp < o.mhp) U.bar(sx - 18 * K, sy + 14 * K, 36 * K, 4, o.hp / o.mhp, '#8a6f3a');
+    if (stSet.has(k(o.x, o.y))) {
+      hexPath(sx, sy, Z - 4);
+      U.ctx.strokeStyle = 'rgba(255,107,94,0.75)';
+      U.ctx.lineWidth = 2;
+      U.ctx.stroke();
+    }
+  }
   for (const tr of c.traps) {
-    const [px, py] = tileXY(tr.x, tr.y);
+    const [sx, sy] = scr(tr.x, tr.y);
+    if (!onScreen(sx, sy)) continue;
     U.ctx.globalAlpha = tr.sprung ? 0.18 : 0.9;
-    U.txt('🔺', px + T / 2, py + T / 2 + 2, 20);
+    U.txt('🔺', sx, sy + 1, 20 * K);
     U.ctx.globalAlpha = 1;
+    if (!tr.sprung && tr.hp < tr.mhp) U.bar(sx - 18 * K, sy + 14 * K, 36 * K, 4, tr.hp / tr.mhp, '#8a6f3a');
+    if (stSet.has(k(tr.x, tr.y))) {
+      hexPath(sx, sy, Z - 4);
+      U.ctx.strokeStyle = 'rgba(255,107,94,0.75)';
+      U.ctx.lineWidth = 2;
+      U.ctx.stroke();
+    }
   }
   for (const ch of c.chests) {
-    const [px, py] = tileXY(ch.x, ch.y);
-    U.txt(ch.opened ? '📭' : '📦', px + T / 2, py + T / 2, 26);
+    const [sx, sy] = scr(ch.x, ch.y);
+    if (!onScreen(sx, sy)) continue;
+    U.txt(ch.opened ? '📭' : '📦', sx, sy, 26 * K);
   }
   for (const it of c.items) {
     if (it.taken) continue;
-    const [px, py] = tileXY(it.x, it.y);
-    U.txt(it.t === 'gold' ? '💰' : getItem(it.id).emoji, px + T / 2, py + T / 2, 20);
+    const [sx, sy] = scr(it.x, it.y);
+    if (!onScreen(sx, sy)) continue;
+    U.txt(it.t === 'gold' ? '💰' : getItem(it.id).emoji, sx, sy, 20 * K);
   }
-  // player
+  // player (red-highlighted while a previewed foe can reach and hit them)
   {
-    const [px, py] = tileXY(c.px, c.py);
-    U.txt('🤺', px + T / 2, py + T / 2, 32);
-    if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, px + T / 2, py + 8, 10, BLU);
+    const [sx, sy] = scr(c.px, c.py);
+    if (fvThreat) {
+      const pulse = 0.55 + Math.sin(t / 160) * 0.25;
+      hexPath(sx, sy, Z - 2);
+      U.ctx.fillStyle = `rgba(255,70,60,${pulse * 0.35})`;
+      U.ctx.fill();
+      U.ctx.strokeStyle = `rgba(255,80,70,${pulse})`;
+      U.ctx.lineWidth = 3;
+      U.ctx.stroke();
+      U.txt('⚠️', sx, sy - Z - 6, 13);
+    }
+    U.txt('🤺', sx, sy, 34 * K);
+    if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, sx, sy - Z + 7, Math.max(8, 11 * K), BLU);
   }
   // foes
   c.foes.forEach((f, i) => {
     if (f.dead) return;
+    const [sx, sy] = scr(f.x, f.y);
+    if (!onScreen(sx, sy)) return;
     const m = MONSTERS[f.mid];
-    const [px, py] = tileXY(f.x, f.y);
     const targeted = aTargets.includes(i) || bTargets.includes(i) || (sSkill && sSkill.tgt === 'foe' && sTargets.includes(i));
     if (targeted) {
-      U.rr(px + 3, py + 3, T - 6, T - 6, 10);
+      hexPath(sx, sy, Z - 3);
       U.ctx.strokeStyle = aTargets.includes(i) ? RED : bTargets.includes(i) ? '#ffab4a' : PUR;
       U.ctx.lineWidth = 2.5;
       U.ctx.stroke();
     }
-    if (c.phase === 'enemy' && c.ei === i) {
-      U.rr(px + 2, py + 2, T - 4, T - 4, 10);
-      U.ctx.strokeStyle = '#ffffff';
+    if ((c.phase === 'enemy' && c.ei === i) || c.sel === i) {
+      hexPath(sx, sy, Z - 1);
+      U.ctx.strokeStyle = c.sel === i ? GOLD : '#ffffff';
       U.ctx.lineWidth = 2;
       U.ctx.stroke();
     }
-    U.txt(m.emoji, px + T / 2, py + T / 2 + 2, 32);
-    U.txt('❓', px + T - 8, py + 9, 9);
-    U.bar(px + 6, py + T - 8, T - 12, 5, f.hp / f.maxHp, '#b34a44');
-    const chips = [];
+    if (!f.awake) U.ctx.globalAlpha = 0.8;
+    U.txt(m.emoji, sx, sy + 1, 30 * K);
+    U.ctx.globalAlpha = 1;
+    U.txt('❓', sx + 15 * K, sy - 13 * K, 9);
+    U.bar(sx - 20 * K, sy + 15 * K, 40 * K, 4, f.hp / f.maxHp, '#b34a44');
+    const chips = [f.awake ? `⚡${m.ap}` : `💤${f.napT}`];
     if (f.block > 0) chips.push(`🛡️${f.block}`);
-    if (f.buff > 0) chips.push(`💢`);
-    if (f.psnT > 0) chips.push(`☠️`);
-    if (f.stun > 0) chips.push(`🧊`);
-    if (chips.length) U.txt(chips.join(''), px + 4, py + 8, 10, TXT, 'left');
+    if (f.buff > 0) chips.push('💢');
+    if (f.psnT > 0) chips.push('☠️');
+    if (f.stun > 0) chips.push('🧊');
+    U.txt(chips.join(''), sx, sy - Z + 6, Math.max(8, 10 * K), TXT);
+  });
+  // compass to the nearest foe while exploring
+  if (!engaged && !prep) {
+    const nf = nearestFoe();
+    if (nf) {
+      const [tpx, tpy] = toPixel(nf.f.x, nf.f.y, Z);
+      const sx = VX + tpx - camX, sy = VY + tpy - camY;
+      if (!(sx > VX && sx < VX + VW && sy > VY && sy < VY + VH)) {
+        const cxp = Math.max(VX + 34, Math.min(VX + VW - 34, sx));
+        const cyp = Math.max(VY + 34, Math.min(VY + VH - 34, sy));
+        U.ctx.beginPath();
+        U.ctx.arc(cxp, cyp, 24, 0, Math.PI * 2);
+        U.ctx.fillStyle = 'rgba(20,20,32,0.85)';
+        U.ctx.fill();
+        U.ctx.strokeStyle = '#ffab4a';
+        U.ctx.lineWidth = 2;
+        U.ctx.stroke();
+        U.txt(MONSTERS[nf.f.mid].emoji, cxp, cyp - 3, 18);
+        U.txt(`${nf.d}`, cxp, cyp + 14, 10, '#ffab4a');
+        U.hit(cxp - 28, cyp - 28, 56, 56, () => {
+          camX = Math.max(0, Math.min(maxCX, tpx - VW / 2));
+          camY = Math.max(0, Math.min(maxCY, tpy - VH / 2));
+          camFree = true;
+        });
+      }
+    }
+  }
+  U.ctx.restore();
+  U.panel(VX, VY, VW, VH, 10, null, '#33334a');
+  // one tap surface for the whole board: convert pixel → hex
+  U.hit(VX, VY, VW, VH, (pt) => {
+    if (!pt) return;
+    const [hx, hy] = fromPixel(pt.x - VX + camX, pt.y - VY + camY, se());
+    tapBoard(hx, hy);
   });
 
-  // status row: AP pips + phase
+  // info strip: AP + current action stats
   for (let i = 0; i < P.apMax; i++) {
     U.ctx.beginPath();
-    U.ctx.arc(24 + i * 22, 496, 8, 0, Math.PI * 2);
-    U.ctx.fillStyle = i < c.ap ? '#7fe08a' : '#22222f';
+    U.ctx.arc(20 + i * 20, 525, 7, 0, Math.PI * 2);
+    U.ctx.fillStyle = i < c.ap ? GRN : '#22222f';
     U.ctx.fill();
   }
-  U.txt('AP', 24 + P.apMax * 22, 497, 13, DIM, 'left');
-  U.txt(myTurn ? 'Your move' : 'Enemy turn…', 406, 497, 14, myTurn ? '#7fe08a' : RED, 'right', true);
+  U.txt('AP', 20 + P.apMax * 20 + 4, 526, 12, DIM, 'left');
+  const strip = prep ? (fvFoe ? [`${MONSTERS[fvFoe.mid].name}: orange = its range${fvThreat ? ' — it can reach you!' : ''}`, fvThreat ? RED : '#ffab4a'] : ['Scout: drag · tap foes · 👁 jumps to each', BLU]) :
+    !myTurn ? (fvThreat ? ['Enemy turn — it can hit you!', RED] : ['Enemy turn…', RED]) :
+    c.mode === 'atk' ? [`${w.emoji} ${w.name}: ${w.dmg} dmg · rng ${w.rng} · ${w.ap} AP`, RED] :
+    sSkill ? [`${sSkill.emoji} ${sSkill.name}: ${shortSkillStat(sSkill, w)} · rng ${sSkill.rng || 0} · ${sSkill.ap}⚡${sSkill.mp}🔮 · cd ${sSkill.cd}`, PUR] :
+    c.mode === 'bomb' ? ['💣 10 dmg · rng 3 · 1 AP — tap a foe', '#ffab4a'] :
+    selFoe ? [`${MONSTERS[selFoe.mid].name}: orange = its range${fvThreat ? ' — you are in danger!' : ''}`, fvThreat ? RED : '#ffab4a'] :
+    !engaged ? ['🔦 Exploring — moves are free', BLU] :
+    ['Green = hexes you can reach', GRN];
+  U.txt(strip[0], 412, 526, 12, strip[1], 'right');
 
-  (c.lines || []).slice(-2).forEach((s, i) => U.txt(s, 14, 518 + i * 17, 12, DIM, 'left'));
+  (c.lines || []).slice(-2).forEach((s, i) => U.txt(s, 12, 543 + i * 16, 11, DIM, 'left'));
 
-  // action bar
-  const dis = !myTurn;
-  const selStroke = (on) => on ? GOLD : undefined;
-  U.button(14, 552, 76, 62, '🚶', () => setMode('move'), { size: 22, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
-  U.button(94, 552, 76, 62, w.emoji, () => setMode('atk'), { size: 22, sub: `Atk ${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
-  for (const s2 of [0, 1]) {
-    const sk = skillFor(s2);
-    const x = 174 + s2 * 80;
-    if (!sk) {
-      U.panel(x, 552, 76, 62, 14, '#12121b', '#22222f');
-      U.txt('·', x + 38, 583, 18, '#33333f');
-      continue;
-    }
-    const issue = skillIssue(s2);
-    U.button(x, 552, 76, 62, sk.emoji, () => {
-      if (skillIssue(s2)) return;
-      if (sk.tgt === 'self' || sk.tgt === 'burst') castSkill(s2);
-      else setMode('sk' + s2);
-    }, { size: 22, sub: issue || `${sk.ap}⚡${sk.mp}🔮`, disabled: dis || !!issue, stroke: selStroke(c.mode === 'sk' + s2) });
-  }
-  const defGain = 2 + (getSecondary().block || 0) + getArmor().def;
-  U.button(334, 552, 72, 62, '🛡️', defend, { size: 22, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
-
-  // potions + end turn
-  for (let i = 0; i < 3; i++) {
-    const x = 14 + i * 90;
-    const id = P.potions[i];
-    if (id) {
-      const p = POTIONS[id];
-      U.button(x, 622, 84, 62, p.emoji, () => usePotion(i), {
-        size: 24, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
-        stroke: (c.mode === 'bomb' && c.potIdx === i) ? GOLD : undefined,
+  if (prep) {
+    // scout phase: look around, inspect, set your build, then begin
+    U.button(14, 574, 92, 62, '🎒', () => { invPage = 0; G.ret = 'COMBAT'; goto('INV'); }, { size: 19, sub: 'Gear' });
+    U.button(112, 574, 92, 62, '✨', () => { skillPage = 0; G.ret = 'COMBAT'; goto('SKILLS'); }, { size: 19, sub: 'Skills' });
+    U.button(210, 574, 92, 62, '👁', cycleFoe, { size: 19, sub: 'Next foe' });
+    U.button(308, 574, 98, 62, '⚔️', beginBattle, { size: 19, sub: 'BEGIN', fill: '#3a2f1c', stroke: '#8a6f3a' });
+    U.txt('Enemies hold still while you scout the caverns.', 210, 664, 12, DIM);
+    U.txt(`${c.foes.filter(f => !f.dead && !f.awake).length} sleeping · ${c.foes.filter(f => !f.dead && f.awake).length} alert`, 210, 686, 12, '#ffab4a');
+  } else {
+    // action bar
+    const dis = !myTurn;
+    const qHit = (x, y2, type) => U.hit(x, y2, 30, 30, () => { aInfo = type; });
+    const selStroke = (on) => on ? GOLD : undefined;
+    U.button(14, 574, 76, 56, '🚶', () => setMode('move'), { size: 20, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
+    U.button(94, 574, 76, 56, w.emoji, () => setMode('atk'), { size: 20, sub: `${w.dmg}dmg·${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
+    U.txt('❓', 158, 582, 10, DIM);
+    qHit(140, 570, { t: 'atk' });
+    for (const s2 of [0, 1]) {
+      const sk = skillFor(s2);
+      const x = 174 + s2 * 80;
+      if (!sk) {
+        U.panel(x, 574, 76, 56, 14, '#12121b', '#22222f');
+        U.txt('·', x + 38, 602, 18, '#33333f');
+        continue;
+      }
+      const issue = skillIssue(s2);
+      const cd = (c.cds && c.cds[sk.id]) || 0;
+      U.button(x, 574, 76, 56, sk.emoji, () => {
+        if (skillIssue(s2)) return;
+        if (sk.tgt === 'self' || sk.tgt === 'burst') castSkill(s2);
+        else setMode('sk' + s2);
+      }, {
+        size: 20,
+        sub: cd > 0 ? `CD ${cd}` : issue || `${sk.ap}⚡${sk.mp}🔮`,
+        disabled: dis || !!issue,
+        stroke: selStroke(c.mode === 'sk' + s2),
       });
-    } else {
-      U.panel(x, 622, 84, 62, 14, '#12121b', '#22222f');
-      U.txt('·', x + 42, 653, 18, '#33333f');
+      U.txt('❓', x + 64, 582, 10, DIM);
+      qHit(x + 46, 570, { t: 'sk', slot: s2 });
     }
-  }
-  U.button(288, 622, 118, 62, 'END', endTurn, { size: 19, sub: 'turn', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis });
+    const defGain = 2 + (getSecondary().block || 0) + getArmor().def;
+    U.button(334, 574, 72, 56, '🛡️', defend, { size: 20, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
+    U.txt('❓', 394, 582, 10, DIM);
+    qHit(376, 570, { t: 'def' });
 
-  const hint = !myTurn ? '' :
-    c.mode === 'atk' ? 'Tap a highlighted foe to strike' :
-    c.mode === 'sk0' || c.mode === 'sk1' ? 'Tap a target' :
-    c.mode === 'bomb' ? 'Tap a foe in range to throw' :
-    'Tap a tile to move · tap a foe to inspect ❓';
-  U.txt(hint, 210, 706, 12, DIM);
+    // potions + end turn
+    for (let i = 0; i < 3; i++) {
+      const x = 14 + i * 88;
+      const id = P.potions[i];
+      if (id) {
+        const p = POTIONS[id];
+        U.button(x, 636, 82, 56, p.emoji, () => usePotion(i), {
+          size: 22, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
+          stroke: (c.mode === 'bomb' && c.potIdx === i) ? GOLD : undefined,
+        });
+      } else {
+        U.panel(x, 636, 82, 56, 14, '#12121b', '#22222f');
+        U.txt('·', x + 41, 664, 18, '#33333f');
+      }
+    }
+    U.button(282, 636, 124, 56, 'END', endTurn, { size: 18, sub: engaged ? 'turn' : 'explore', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis || !engaged });
+
+    const hint = !myTurn ? '' :
+      c.mode === 'atk' ? 'Tap foes, rock, or traps in range to strike' :
+      c.mode === 'sk0' || c.mode === 'sk1' ? 'Tap a target in the tinted range' :
+      c.mode === 'bomb' ? 'Tap a foe in range to throw' :
+      !engaged ? 'All quiet: stride freely · pinch to zoom · compass points to foes' :
+      'Tap green: move · tap foe: its range · again: details';
+    U.txt(hint, 210, 712, 12, DIM);
+  }
 
   if (c.info >= 0 && c.foes[c.info]) foeInfo(c.foes[c.info]);
+  else if (aInfo) actionInfo(aInfo, c);
 }
 
 function describeMove(mv) {
@@ -294,29 +546,88 @@ function describeMove(mv) {
   return `+${mv.atk} ATK once · ${mv.ap} AP`;
 }
 
-function foeInfo(f) {
-  const m = MONSTERS[f.mid];
+function overlayPanel(h) {
   U.ctx.fillStyle = 'rgba(5,5,10,0.72)';
   U.ctx.fillRect(0, 0, U.W, U.H);
-  const h = 150 + m.moves.length * 26 + 40;
-  const y0 = 220;
+  const y0 = Math.max(60, 400 - h / 2);
   U.panel(30, y0, 360, h, 18, '#1a1a28', '#4a4a68');
+  return y0;
+}
+
+function foeInfo(f) {
+  const m = MONSTERS[f.mid];
+  const hasMelee = m.moves.some(mv => mv.t === 'melee');
+  const h = 158 + m.moves.length * 26 + (hasMelee ? 24 : 0) + 40;
+  const y0 = overlayPanel(h);
   U.txt(m.emoji, 76, y0 + 46, 40);
   U.txt(m.name, 110, y0 + 34, 20, TXT, 'left', true);
   U.txt(`❤️ ${f.hp}/${f.maxHp}   🛡️ DEF ${m.def}   ⚡ ${m.ap} AP`, 110, y0 + 60, 13, DIM, 'left');
-  U.txt('Moves', 52, y0 + 100, 14, GOLD, 'left', true);
+  U.txt(f.awake ? '👁️ Alert — will act on its turn' : `💤 Asleep ${f.napT} more turn${f.napT === 1 ? '' : 's'} — or wakes within ${AGRO} hexes / when hurt`, 110, y0 + 80, 12, f.awake ? '#ff9b6b' : DIM, 'left');
+  U.txt('Moves', 52, y0 + 112, 14, GOLD, 'left', true);
   m.moves.forEach((mv, i) => {
-    U.txt(`${mv.emoji} ${mv.name}`, 52, y0 + 126 + i * 26, 14, TXT, 'left');
-    U.txt(describeMove(mv), 368, y0 + 126 + i * 26, 12, DIM, 'right');
+    U.txt(`${mv.emoji} ${mv.name}`, 52, y0 + 138 + i * 26, 14, TXT, 'left');
+    U.txt(describeMove(mv), 368, y0 + 138 + i * 26, 12, DIM, 'right');
   });
+  let yy = y0 + 138 + m.moves.length * 26;
+  if (hasMelee) {
+    U.txt('⚔️ Strikes anyone who steps out of its reach', 52, yy, 12, '#ff9b6b', 'left');
+    yy += 24;
+  }
   const st = [];
   if (f.buff > 0) st.push(`💢 +${f.buff} ATK`);
   if (f.psnT > 0) st.push(`☠️ poison ${f.psn}×${f.psnT}`);
   if (f.stun > 0) st.push('🧊 frozen');
   if (f.block > 0) st.push(`🛡️ ${f.block} block`);
-  if (st.length) U.txt(st.join('   '), 52, y0 + 126 + m.moves.length * 26, 12, '#ff9b6b', 'left');
+  if (st.length) U.txt(st.join('   '), 52, yy, 12, '#ff9b6b', 'left');
   U.txt('tap anywhere to close', 210, y0 + h - 18, 11, DIM);
   U.hit(0, 0, U.W, U.H, closeInfo);
+}
+
+function actionInfo(info, c) {
+  const w = getPrimary();
+  let title = '', emoji = '', lines = [];
+  if (info.t === 'atk') {
+    title = w.name;
+    emoji = w.emoji;
+    lines = [
+      `Damage: ${w.dmg} (±1), before enemy DEF/block`,
+      `Range: ${w.rng} hexes — all 6 sides count`,
+      `Cost: ${w.ap} AP per swing`,
+      'Also smashes rock walls, obstacles, and traps.',
+      'Leaving an enemy’s reach provokes a free',
+      'hit — and fleeing enemies eat yours.',
+    ];
+  } else if (info.t === 'def') {
+    const off = getSecondary(), arm = getArmor();
+    title = 'Defend';
+    emoji = '🛡️';
+    lines = [
+      `Gain ${2 + (off.block || 0) + arm.def} block = 2 + ${off.name} ${off.block || 0} + armor ${arm.def}`,
+      'Costs 1 AP · once per turn',
+      'Block soaks damage until your next turn.',
+    ];
+  } else {
+    const sk = skillFor(info.slot);
+    if (!sk) { aInfo = null; return; }
+    title = sk.name;
+    emoji = sk.emoji;
+    lines = [
+      sk.desc,
+      `Effect: ${shortSkillStat(sk, w)}`,
+      `Range: ${sk.rng || '—'}${sk.rng ? ' hexes' : ''}`,
+      `Cost: ${sk.ap} AP + ${sk.mp} MP`,
+      `Cooldown: ${sk.cd} turn${sk.cd > 1 ? 's' : ''} after casting`,
+    ];
+    const cd = (c.cds && c.cds[sk.id]) || 0;
+    if (cd > 0) lines.push(`⏳ Ready again in ${cd} turn${cd > 1 ? 's' : ''}`);
+  }
+  const h = 92 + lines.length * 24 + 34;
+  const y0 = overlayPanel(h);
+  U.txt(emoji, 72, y0 + 46, 36);
+  U.txt(title, 104, y0 + 46, 20, TXT, 'left', true);
+  lines.forEach((s, i) => U.txt(s, 52, y0 + 92 + i * 24, 13, i === 0 && info.t === 'sk' ? TXT : DIM, 'left'));
+  U.txt('tap anywhere to close', 210, y0 + h - 16, 11, DIM);
+  U.hit(0, 0, U.W, U.H, () => { aInfo = null; });
 }
 
 // ---------- choice (loot / events / rewards) ----------
@@ -443,7 +754,7 @@ function skills() {
     const sk = id ? SKILLS[id] : null;
     U.button(16 + s * 198, 108, 190, 62, sk ? `${sk.emoji} ${sk.name}` : '· empty ·',
       () => { if (id) toggleSkill(id); }, {
-        size: 15, fill: sk ? '#2c2c44' : '#14141d', stroke: sk ? GOLD : '#2c2c40', sub: sk ? `${sk.ap}⚡ ${sk.mp}🔮` : `slot ${s + 1}`,
+        size: 15, fill: sk ? '#2c2c44' : '#14141d', stroke: sk ? GOLD : '#2c2c40', sub: sk ? `${sk.ap}⚡ ${sk.mp}🔮 cd${sk.cd}` : `slot ${s + 1}`,
       });
   }
   const known = G.player.known;
@@ -457,7 +768,7 @@ function skills() {
     U.txt(sk.emoji, 48, y + 50, 30);
     U.txt(sk.name, 84, y + 28, 16, TXT, 'left', true);
     U.txt(sk.desc, 84, y + 54, 11, DIM, 'left');
-    U.txt(`${sk.ap} AP · ${sk.mp} MP`, 84, y + 78, 11, PUR, 'left');
+    U.txt(`${sk.ap} AP · ${sk.mp} MP · cd ${sk.cd}`, 84, y + 78, 11, PUR, 'left');
     U.button(308, y + 22, 88, 56, equipped ? 'Unequip' : 'Equip', () => toggleSkill(id), {
       size: 13, fill: equipped ? '#232338' : '#24405c', stroke: equipped ? '#5a5a7a' : '#5b8ab8',
     });
@@ -504,16 +815,16 @@ function title() {
   }
   U.button(110, canContinue() ? 498 : 442, 200, 60, 'New Run', () => newRun(), { size: 20 });
   U.txt('⚔️ fight   ❓ event   💰 treasure   🛒 shop', 210, 612, 13, DIM);
-  U.txt('Grid battles: spend AP to move, strike, and cast.', 210, 636, 13, DIM);
-  U.txt('Loot every foe. Craft. Slay the dragon on floor 8.', 210, 658, 13, DIM);
-  U.txt('v0.2 · built with Claude', 210, 774, 11, '#55536a');
+  U.txt('Explore vast hex caverns: sneak, dig, and duel.', 210, 636, 13, DIM);
+  U.txt('Loot every foe. Craft. Slay the dragon on floor 10.', 210, 658, 13, DIM);
+  U.txt('v0.5 · built with Claude', 210, 774, 11, '#55536a');
 }
 
 function endScreen(emoji, label, color) {
   U.txt(emoji, 210, 230, 88);
   U.txt(label, 210, 330, 36, color, 'center', true);
   const s = G.stats || { floor: 0, kills: 0, goldEarned: 0 };
-  U.txt(`Reached floor ${s.floor}/8`, 210, 396, 16, TXT);
+  U.txt(`Reached floor ${s.floor}/10`, 210, 396, 16, TXT);
   U.txt(`Foes slain: ${s.kills}`, 210, 424, 16, TXT);
   U.txt(`Gold earned: ${s.goldEarned}`, 210, 452, 16, TXT);
   U.txt(`Skills known: ${G.player ? G.player.known.length : 0}/10`, 210, 480, 16, TXT);
