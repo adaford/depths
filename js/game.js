@@ -64,7 +64,7 @@ export function newRun() {
   G.map = genMap(G.rng);
   G.cur = -1;
   G.player = {
-    hp: 60, maxHp: 60, mp: 10, maxMp: 10, apMax: 4,
+    hp: 66, maxHp: 66, mp: 10, maxMp: 10, apMax: 4,
     gold: 25, scrap: 4,
     primary: 'w_club', secondary: 's_wood', armor: null,
     potions: ['p_heal', 'p_mana'],
