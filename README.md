@@ -1,9 +1,10 @@
 # ⚔️ DEPTHS — a pocket tactics roguelike
 
 Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
-❓ events, treasure, merchants), then delve VAST hexagonal caverns — every
-battle-map is a freshly generated labyrinth of halls, winding corridors, and
-caves, up to a hundred hexes across. Scout before you commit: scroll the whole
+❓ events, treasure, merchants), then delve dense hexagonal caverns — every
+battle-map is a freshly generated labyrinth of cramped halls, chokepoint
+corridors, and caves, crawling with packed dens, spike traps at the corridor
+mouths, and cover to duck behind. Scout before you commit: scroll the whole
 map (pinch to zoom, drag to pan), tap enemies to see their walk range and
 full movesets (red flash = they can reach you), and swap gear and skills.
 Every enemy dozes on its own 0-4 turn timer — sneak while they sleep, and

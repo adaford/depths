@@ -24,7 +24,7 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
 - All content (monsters + movesets, gear, potions, skills, craft recipes, node
   emoji) is data in `js/data.js`; gameplay code is data-driven off those tables.
   Add content there, not in logic.
-- Combat is a huge HEX dungeon (60-100 hexes a side; rooms, corridors, or caves
+- Combat is a dense HEX dungeon (26-44 hexes a side; rooms, corridors, or caves
   — generator style rolls per fight) viewed through a scrollable camera (drag
   to pan; `U.dragZone` in `js/ui.js` decides tap vs drag). Tiles are pointy-top
   hexes in odd-r offset coords — ALL geometry (neighbors, distance, pixel

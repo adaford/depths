@@ -1,5 +1,6 @@
-// Tactical dungeon combat on huge HEX maps (60-100 hexes a side) of rooms,
-// winding corridors, and caves — every map rolls a different generator style.
+// Tactical dungeon combat on dense HEX maps (26-44 hexes a side) of tight rooms,
+// chokepoint corridors, and caves — every map rolls a different generator style.
+// Traps favor corridor mouths and chest sides; obstacles stand as cover in rooms.
 // Fights open in a SCOUT phase: pan the map, inspect foes, swap your build, begin.
 // While no enemy is awake you EXPLORE freely (moves cost nothing, long strides);
 // the moment someone wakes, the AP economy kicks in: moving (1/hex), attacking
@@ -20,7 +21,7 @@ import * as Gr from './grid.js';
 
 export const FX = [];
 export const AGRO = 6;          // hex distance at which a sleeping foe wakes early
-export const EXPLORE_STEPS = 12; // free-move stride per tap while nothing threatens
+export const EXPLORE_STEPS = 8;  // free-move stride per tap while nothing threatens
 export const ENGAGE_R = 10;      // an awake foe this close pulls you into combat
 export const CHASE_R = 20;       // once alarmed, pursuers this close keep you in it
 export const FAR = 12;           // awake foes beyond this march silently (no beats)
@@ -68,7 +69,7 @@ export function nearestFoe() {
 const POOLS = { easy: [], med: [], elite: [], minion: [], boss: [] };
 for (const [id, m] of Object.entries(MONSTERS)) POOLS[m.pool].push(id);
 
-// Wide variance on purpose: counts, mixes, and (via `nap`) how many start asleep.
+// Wide variance on purpose: counts and mixes swing fight to fight.
 function rollFoes(r, kind, row) {
   if (kind === 'boss') {
     const ids = ['m_dragon'];
@@ -77,10 +78,10 @@ function rollFoes(r, kind, row) {
   }
   const ids = [];
   const easy = () => pick(r, POOLS.easy), med = () => pick(r, POOLS.med);
-  if (row <= 1) { const n = ri(r, 2, 3); for (let i = 0; i < n; i++) ids.push(easy()); }
-  else if (row <= 3) { const n = ri(r, 3, 4); for (let i = 0; i < n; i++) ids.push(easy()); }
+  if (row <= 1) { const n = ri(r, 2, 4); for (let i = 0; i < n; i++) ids.push(easy()); }
+  else if (row <= 3) { const n = ri(r, 3, 5); for (let i = 0; i < n; i++) ids.push(chance(r, 0.85) ? easy() : med()); }
   else if (row <= 5) {
-    const n = ri(r, 4, 6);
+    const n = ri(r, 4, 7);
     ids.push(med());
     for (let i = 1; i < n; i++) ids.push(chance(r, 0.5) ? easy() : med());
   } else {
@@ -91,7 +92,7 @@ function rollFoes(r, kind, row) {
     if (chance(r, 0.18)) ids[1] = pick(r, POOLS.elite);
   }
   if (kind === 'ambush') ids.push(row <= 3 ? easy() : med());
-  return ids.slice(0, 9);
+  return ids.slice(0, 10);
 }
 
 function rollDropGear(r, tier) {
@@ -106,8 +107,8 @@ function rollDropGear(r, tier) {
 
 // ---------- dungeon generation: huge hex maps, three styles ----------
 function genDungeon(r, kind) {
-  const w = kind === 'boss' ? ri(r, 60, 80) : ri(r, 60, 100);
-  const h = kind === 'boss' ? ri(r, 60, 80) : ri(r, 60, 100);
+  const w = kind === 'boss' ? ri(r, 30, 42) : ri(r, 26, 44);
+  const h = kind === 'boss' ? ri(r, 30, 42) : ri(r, 26, 44);
   const floors = new Set();
   const carve = (x, y) => { if (x >= 1 && x < w - 1 && y >= 1 && y < h - 1) floors.add(y * w + x); };
   const carveBlob = (cx, cy, rad) => {
@@ -120,15 +121,16 @@ function genDungeon(r, kind) {
   const rooms = [];
   const addRooms = (n) => {
     for (let i = 0; i < n; i++) {
-      const rad = ri(r, 2, 6);
+      const rad = ri(r, 2, 4);
       const cx = ri(r, rad + 2, w - rad - 3), cy = ri(r, rad + 2, h - rad - 3);
       rooms.push({ x: cx, y: cy, rad });
       carveBlob(cx, cy, rad);
     }
   };
+  // mostly 1-hex-wide, winding — corridors ARE the chokepoints
   const corridor = (x1, y1, x2, y2) => {
     let x = x1, y = y1, guard = (w + h) * 4;
-    const wide = chance(r, 0.35);
+    const wide = chance(r, 0.15);
     while ((x !== x2 || y !== y2) && guard-- > 0) {
       carve(x, y);
       const ns = Gr.neighbors(x, y).filter(([nx, ny]) => nx >= 1 && nx < w - 1 && ny >= 1 && ny < h - 1);
@@ -144,7 +146,7 @@ function genDungeon(r, kind) {
   };
   const style = rnd(r);
   if (style < 0.55) { // halls and winding corridors
-    addRooms(ri(r, 8, 18));
+    addRooms(ri(r, 5, 10));
     const order = rooms.map((q, i) => i);
     for (let i = order.length - 1; i > 0; i--) { const j = ri(r, 0, i); [order[i], order[j]] = [order[j], order[i]]; }
     for (let i = 1; i < order.length; i++) {
@@ -152,13 +154,13 @@ function genDungeon(r, kind) {
       corridor(a.x, a.y, b.x, b.y);
     }
     for (let i = 0; i < rooms.length; i++) {
-      if (!chance(r, 0.25)) continue;
+      if (!chance(r, 0.2)) continue;
       const j = ri(r, 0, rooms.length - 1);
       if (j !== i) corridor(rooms[i].x, rooms[i].y, rooms[j].x, rooms[j].y);
     }
   } else if (style < 0.8) { // organic caves (drunkard walk)
     let x = (w / 2) | 0, y = (h / 2) | 0;
-    const target = Math.floor(w * h * 0.16);
+    const target = Math.floor(w * h * 0.22);
     let guard = target * 16;
     while (floors.size < target && guard-- > 0) {
       carve(x, y);
@@ -168,16 +170,16 @@ function genDungeon(r, kind) {
       y = ny;
     }
     const fl = [...floors];
-    for (let i = 0, n = ri(r, 8, 14); i < n; i++) {
+    for (let i = 0, n = ri(r, 5, 9); i < n; i++) {
       const f = pick(r, fl);
-      rooms.push({ x: f % w, y: (f / w) | 0, rad: 3 });
+      rooms.push({ x: f % w, y: (f / w) | 0, rad: 2 });
     }
   } else { // hybrid: halls with cave pockets eaten into them
-    addRooms(ri(r, 6, 12));
+    addRooms(ri(r, 4, 8));
     for (let i = 1; i < rooms.length; i++) corridor(rooms[i - 1].x, rooms[i - 1].y, rooms[i].x, rooms[i].y);
-    for (let n = 0; n < 3; n++) {
+    for (let n = 0; n < 2; n++) {
       let { x, y } = pick(r, rooms);
-      let steps = ri(r, 150, 400);
+      let steps = ri(r, 60, 160);
       while (steps-- > 0) {
         carve(x, y);
         const [nx, ny] = pick(r, Gr.neighbors(x, y));
@@ -259,10 +261,14 @@ export function startCombat(kind, row) {
     }
   }
 
-  // clutter: obstacles / traps / chests / pickups, scaled to map size, heavy variance
+  // clutter: dense on purpose — cover inside rooms, traps at chokepoints and loot
   const area = d.floors.size;
   const inAnyRoom = (x, y) => d.rooms.some(rm => Gr.dist(x, y, rm.x, rm.y) <= rm.rad);
+  const roomFloor = all.filter(([x, y]) => inAnyRoom(x, y));
   const hallCells = all.filter(([x, y]) => !inAnyRoom(x, y));
+  // corridor mouths: hall hexes touching a room — natural ambush/chokepoint spots
+  const entranceCells = hallCells.filter(([x, y]) =>
+    Gr.neighbors(x, y).some(([nx, ny]) => d.floors.has(ny * d.w + nx) && inAnyRoom(nx, ny)));
   const obs = [];
   const chests = [];
   const staticBlocked = () => new Set([...obs, ...chests].map(o => o.y * d.w + o.x));
@@ -273,30 +279,38 @@ export function startCombat(kind, row) {
     if (blocked.has(startI)) return false;
     return flood(d.w, d.h, d.floors, blocked, startI).size === d.floors.size - blocked.size;
   };
-  const nObs = chance(r, 0.25) ? 0 : ri(r, 2, Math.min(15, 3 + Math.floor(area / 200)));
+  // obstacles mostly stand inside rooms: cover to duck behind, lanes to funnel foes
+  const nObs = chance(r, 0.15) ? 0 : ri(r, 3, Math.min(16, 4 + Math.floor(area / 45)));
   for (let i = 0; i < nObs; i++) {
-    const p = takeFrom(farFrom(all, 3));
+    const p = (chance(r, 0.7) ? takeFrom(farFrom(roomFloor, 2)) : null) || takeFrom(farFrom(all, 2));
     if (!p) break;
     if (!keepsConnected(p.x, p.y)) continue;
     const [e, hp] = pick(r, OBS_TYPES);
     obs.push({ x: p.x, y: p.y, hp, mhp: hp, e });
   }
   const traps = [];
-  const nt = chance(r, 0.2) ? (kind === 'boss' ? 3 : ri(r, 0, 1)) : ri(r, 2, Math.min(12, 3 + Math.floor(area / 250)));
-  for (let i = 0; i < nt; i++) {
-    const p = takeFrom(farFrom(hallCells, 6)) || takeFrom(farFrom(all, 6));
+  const addTrap = (p) => {
     if (p) traps.push({ x: p.x, y: p.y, dmg: ri(r, 5, 7) + (row >= 6 ? 2 : 0), hp: 5, mhp: 5, sprung: false });
+  };
+  const nt = chance(r, 0.12) ? ri(r, 1, 2) : ri(r, 3, Math.min(14, 4 + Math.floor(area / 60)));
+  for (let i = 0; i < nt; i++) {
+    addTrap((chance(r, 0.6) ? takeFrom(farFrom(entranceCells, 4)) : null)
+      || takeFrom(farFrom(hallCells, 4)) || takeFrom(farFrom(all, 4)));
   }
-  const nChests = chance(r, 0.3) ? 0 : ri(r, 1, 5);
+  const nChests = chance(r, 0.25) ? 0 : ri(r, 1, 4);
   for (let i = 0; i < nChests; i++) {
     const p = takeFrom(farFrom(all, 4));
     if (!p) break;
     if (!keepsConnected(p.x, p.y)) continue;
     chests.push({ x: p.x, y: p.y, opened: false });
+    if (chance(r, 0.5)) { // guarded loot: spikes beside the chest
+      const spots = Gr.neighbors(p.x, p.y).filter(([nx, ny]) => d.floors.has(ny * d.w + nx));
+      if (spots.length) addTrap(takeFrom(spots));
+    }
   }
   const items = [];
-  for (let i = 0, n = ri(r, 0, 5); i < n; i++) {
-    const p = takeFrom(farFrom(all, 6));
+  for (let i = 0, n = ri(r, 1, 5); i < n; i++) {
+    const p = takeFrom(farFrom(all, 5));
     if (!p) break;
     if (chance(r, 0.5)) items.push({ x: p.x, y: p.y, t: 'gear', id: rollDropGear(r, row <= 3 ? 1 : row <= 6 ? 2 : 3), taken: false });
     else items.push({ x: p.x, y: p.y, t: 'gold', v: ri(r, 6, 12), taken: false });
