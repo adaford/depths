@@ -109,7 +109,7 @@ function genMap(r) {
     for (let c = 0; c < n; c++) {
       const x = n === 1 ? 210 : 58 + 304 * (c / (n - 1)) + (row < ROWS - 1 ? ri(r, -8, 8) : 0);
       const type = row === 0 ? 'FIGHT' : row === ROWS - 2 ? 'EVENT' : row === ROWS - 1 ? 'BOSS' : rollType(r);
-      const node = { i: nodes.length, r: row, x: Math.round(x), y: 620 - row * 59, type, next: [], done: false };
+      const node = { i: nodes.length, r: row, x: Math.round(x), y: 634 - row * 62, type, next: [], done: false };
       nodes.push(node);
       list.push(node);
     }

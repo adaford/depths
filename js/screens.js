@@ -19,11 +19,11 @@ import {
 import { MONSTERS, POTIONS, SKILLS, RECIPES, NODE_EMOJI, getItem } from './data.js';
 import { reach, k, dist, toPixel, fromPixel, boardPx, idx } from './grid.js';
 
-const GOLD = '#e8b45a', DIM = '#8a8798', TXT = '#e8e4da', RED = '#ff6b5e', BLU = '#7fc7ff', PUR = '#b39dff', GRN = '#7fe08a';
+const GOLD = '#e8b45a', DIM = '#a29fb2', TXT = '#ece8de', RED = '#ff6b5e', BLU = '#7fc7ff', PUR = '#b39dff', GRN = '#7fe08a';
 
 // combat board viewport + camera (module-local render state, never saved)
 const S = 30; // base hex radius; hex width ≈ 52px at zoom 1
-const VX = 4, VY = 40, VW = 412, VH = 474;
+const VX = 4, VY = 44, VW = 412, VH = 474;
 let zoom = 1; // pinch/wheel zoom, 0.5–1.6
 const se = () => Math.max(15, Math.min(48, S * zoom));
 let camX = 0, camY = 0, camFree = false, camFocusKey = '', lastC = null;
@@ -60,11 +60,11 @@ export function render(t, dt) {
 
 function header(showMenu) {
   const p = G.player;
-  U.txt(`Fl ${G.stats.floor}/10`, 14, 26, 14, DIM, 'left');
-  U.txt(`❤️${p.hp}/${p.maxHp}`, 132, 26, 14, TXT);
-  U.txt(`🔮${p.mp}`, 216, 26, 14, PUR);
-  U.txt(`💰${p.gold}`, 278, 26, 14, GOLD);
-  U.txt(`🔩${p.scrap}`, 340, 26, 14, DIM);
+  U.txt(`Fl ${G.stats.floor}/10`, 14, 26, 15, DIM, 'left');
+  U.txt(`❤️${p.hp}/${p.maxHp}`, 136, 26, 15, TXT);
+  U.txt(`🔮${p.mp}`, 222, 26, 15, PUR);
+  U.txt(`💰${p.gold}`, 286, 26, 15, GOLD);
+  U.txt(`🔩${p.scrap}`, 348, 26, 15, DIM);
   if (showMenu) U.button(374, 6, 38, 38, '≡', () => { G.back = 'MAP'; goto('TITLE'); }, { size: 20 });
 }
 
@@ -77,7 +77,7 @@ function pager(page, pages, set) {
   if (pages <= 1) return page;
   const p = Math.max(0, Math.min(page, pages - 1));
   U.button(84, 640, 64, 56, '◀', () => set(Math.max(0, p - 1)), { size: 20, disabled: p === 0 });
-  U.txt(`${p + 1} / ${pages}`, 210, 668, 15, DIM);
+  U.txt(`${p + 1} / ${pages}`, 210, 668, 16, DIM);
   U.button(272, 640, 64, 56, '▶', () => set(Math.min(pages - 1, p + 1)), { size: 20, disabled: p >= pages - 1 });
   return p;
 }
@@ -85,7 +85,6 @@ function pager(page, pages, set) {
 // ---------- map ----------
 function map(t) {
   header(true);
-  U.txt('Tap a glowing node to travel', 210, 54, 12, DIM);
   const nodes = G.map.nodes;
   const reachIds = reachable();
   U.ctx.lineWidth = 2;
@@ -97,28 +96,28 @@ function map(t) {
       const ux = dx / len, uy = dy / len;
       U.ctx.strokeStyle = (n.i === G.cur && reachIds.includes(j)) ? GOLD : '#2b2b40';
       U.ctx.beginPath();
-      U.ctx.moveTo(n.x + ux * 21, n.y + uy * 21);
-      U.ctx.lineTo(m.x - ux * 21, m.y - uy * 21);
+      U.ctx.moveTo(n.x + ux * 24, n.y + uy * 24);
+      U.ctx.lineTo(m.x - ux * 24, m.y - uy * 24);
       U.ctx.stroke();
     }
   }
   if (G.cur < 0) {
     for (const i of reachIds) {
       const m = nodes[i];
-      const dx = m.x - 210, dy = m.y - 674;
+      const dx = m.x - 210, dy = m.y - 690;
       const len = Math.hypot(dx, dy) || 1;
       const ux = dx / len, uy = dy / len;
       U.ctx.strokeStyle = GOLD;
       U.ctx.beginPath();
-      U.ctx.moveTo(210 + ux * 22, 674 + uy * 22);
-      U.ctx.lineTo(m.x - ux * 21, m.y - uy * 21);
+      U.ctx.moveTo(210 + ux * 24, 690 + uy * 24);
+      U.ctx.lineTo(m.x - ux * 24, m.y - uy * 24);
       U.ctx.stroke();
     }
-    U.txt('🤺', 210, 674, 26);
+    U.txt('🤺', 210, 690, 28);
   }
   const pulse = 1.8 + Math.sin(t / 220) * 1.3;
   for (const n of nodes) {
-    const rad = n.type === 'BOSS' ? 26 : 20;
+    const rad = n.type === 'BOSS' ? 28 : 23;
     const isReach = reachIds.includes(n.i);
     const isCur = n.i === G.cur;
     if (n.done && !isCur) U.ctx.globalAlpha = 0.4;
@@ -129,11 +128,12 @@ function map(t) {
     U.ctx.lineWidth = isReach ? pulse : 2;
     U.ctx.strokeStyle = isCur ? '#ffffff' : isReach ? GOLD : '#3a3a4f';
     U.ctx.stroke();
-    U.txt(NODE_EMOJI[n.type], n.x, n.y + 2, n.type === 'BOSS' ? 25 : 18);
+    U.txt(NODE_EMOJI[n.type], n.x, n.y + 2, n.type === 'BOSS' ? 27 : 21);
     U.ctx.globalAlpha = 1;
-    if (isCur) U.txt('🤺', n.x, n.y - rad - 12, 18);
-    if (isReach) U.hit(n.x - 29, n.y - 29, 58, 58, () => enterNode(n.i));
+    if (isCur) U.txt('🤺', n.x, n.y - rad - 13, 20);
+    if (isReach) U.hit(n.x - 30, n.y - 30, 60, 60, () => enterNode(n.i));
   }
+  if (G.cur >= 0) U.txt('Tap a glowing node to travel', 210, 698, 13, DIM);
   const w = getPrimary(), s = getSecondary(), a = getArmor();
   U.button(14, 716, 122, 60, '🎒', () => { invPage = 0; G.ret = 'MAP'; goto('INV'); }, { size: 22, sub: `${w.emoji}${s.emoji}${a.emoji} Gear` });
   U.button(146, 716, 128, 60, '✨', () => { skillPage = 0; G.ret = 'MAP'; goto('SKILLS'); }, { size: 22, sub: 'Skills' });
@@ -180,14 +180,14 @@ function combat(t) {
   const myTurn = c.phase === 'player';
   const engaged = isEngaged();
 
-  // compact top bar
-  U.bar(10, 5, 148, 15, P.hp / P.maxHp, '#4f9d57', `${P.hp}/${P.maxHp}`);
-  U.bar(10, 23, 106, 11, P.mp / P.maxMp, '#6a5bbf', `${P.mp} MP`);
-  if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, 168, 13, 13, BLU, 'left');
-  if (c.pPsnT > 0) U.txt(`☠️${c.pPsn}×${c.pPsnT}`, 168, 30, 12, '#a8e06a', 'left');
+  // top bar
+  U.bar(10, 4, 172, 21, P.hp / P.maxHp, '#4f9d57', `❤️ ${P.hp}/${P.maxHp}`);
+  U.bar(10, 28, 128, 14, P.mp / P.maxMp, '#6a5bbf', `${P.mp}/${P.maxMp} MP`);
+  if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, 192, 15, 15, BLU, 'left');
+  if (c.pPsnT > 0) U.txt(`☠️${c.pPsn}×${c.pPsnT}`, 192, 35, 14, '#a8e06a', 'left');
   U.txt(prep ? '🔭 SCOUT' : !engaged ? '🔦 EXPLORE' : c.kind === 'boss' ? '🐉 BOSS' : c.kind === 'ambush' ? '☠️ AMBUSH' : `Turn ${c.turn}`,
-    412, 12, 13, prep || !engaged ? BLU : c.kind === 'fight' ? DIM : GOLD, 'right', true);
-  U.txt(`💰${P.gold}`, 412, 30, 13, GOLD, 'right');
+    412, 14, 15, prep || !engaged ? BLU : c.kind === 'fight' ? DIM : GOLD, 'right', true);
+  U.txt(`💰${P.gold}`, 412, 34, 15, GOLD, 'right');
 
   // camera: follow the player / acting foe / inspected foe, unless dragged away
   if (G.combat !== lastC) { lastC = G.combat; camFree = false; camFocusKey = ''; fsCache = null; }
@@ -277,9 +277,9 @@ function combat(t) {
         // solid rock: draw a face only where it borders carved floor
         if (!hexNbs(x, y).some(([nx, ny]) => isFloorAt(nx, ny))) continue;
         hexPath(sx, sy, Z - 1);
-        U.ctx.fillStyle = '#1c1c29';
+        U.ctx.fillStyle = '#262637';
         U.ctx.fill();
-        U.ctx.strokeStyle = '#2a2a3d';
+        U.ctx.strokeStyle = '#383850';
         U.ctx.lineWidth = 1;
         U.ctx.stroke();
         const dmgHp = c.wallDmg[i];
@@ -293,9 +293,9 @@ function combat(t) {
         continue;
       }
       hexPath(sx, sy, Z - 1);
-      U.ctx.fillStyle = dugSet.has(i) ? '#221d18' : (x + y) % 2 ? '#15151f' : '#181823';
+      U.ctx.fillStyle = dugSet.has(i) ? '#2b241c' : (x + y) % 2 ? '#1b1b28' : '#20202e';
       U.ctx.fill();
-      U.ctx.strokeStyle = '#20202e';
+      U.ctx.strokeStyle = '#2a2a3a';
       U.ctx.lineWidth = 1;
       U.ctx.stroke();
       const dd = dist(c.px, c.py, x, y);
@@ -373,10 +373,10 @@ function combat(t) {
       U.ctx.strokeStyle = `rgba(255,80,70,${pulse})`;
       U.ctx.lineWidth = 3;
       U.ctx.stroke();
-      U.txt('⚠️', sx, sy - Z - 6, 13);
+      U.txt('⚠️', sx, sy - Z - 7, 16);
     }
     U.txt('🤺', sx, sy, 34 * K);
-    if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, sx, sy - Z + 7, Math.max(8, 11 * K), BLU);
+    if (c.pBlock > 0) U.txt(`🛡️${c.pBlock}`, sx, sy - Z + 8, Math.max(10, 13 * K), BLU);
   }
   // foes
   c.foes.forEach((f, i) => {
@@ -400,14 +400,14 @@ function combat(t) {
     if (!f.awake) U.ctx.globalAlpha = 0.8;
     U.txt(m.emoji, sx, sy + 1, 30 * K);
     U.ctx.globalAlpha = 1;
-    U.txt('❓', sx + 15 * K, sy - 13 * K, 9);
-    U.bar(sx - 20 * K, sy + 15 * K, 40 * K, 4, f.hp / f.maxHp, '#b34a44');
+    U.txt('❓', sx + 15 * K, sy - 13 * K, 11);
+    U.bar(sx - 20 * K, sy + 15 * K, 40 * K, 5, f.hp / f.maxHp, '#b34a44');
     const chips = [f.awake ? `⚡${m.ap}` : `💤${f.napT}`];
     if (f.block > 0) chips.push(`🛡️${f.block}`);
     if (f.buff > 0) chips.push('💢');
     if (f.psnT > 0) chips.push('☠️');
     if (f.stun > 0) chips.push('🧊');
-    U.txt(chips.join(''), sx, sy - Z + 6, Math.max(8, 10 * K), TXT);
+    U.txt(chips.join(''), sx, sy - Z + 7, Math.max(10, 12 * K), TXT);
   });
   // compass to the nearest foe while exploring
   if (!engaged && !prep) {
@@ -419,14 +419,14 @@ function combat(t) {
         const cxp = Math.max(VX + 34, Math.min(VX + VW - 34, sx));
         const cyp = Math.max(VY + 34, Math.min(VY + VH - 34, sy));
         U.ctx.beginPath();
-        U.ctx.arc(cxp, cyp, 24, 0, Math.PI * 2);
+        U.ctx.arc(cxp, cyp, 27, 0, Math.PI * 2);
         U.ctx.fillStyle = 'rgba(20,20,32,0.85)';
         U.ctx.fill();
         U.ctx.strokeStyle = '#ffab4a';
         U.ctx.lineWidth = 2;
         U.ctx.stroke();
-        U.txt(MONSTERS[nf.f.mid].emoji, cxp, cyp - 3, 18);
-        U.txt(`${nf.d}`, cxp, cyp + 14, 10, '#ffab4a');
+        U.txt(MONSTERS[nf.f.mid].emoji, cxp, cyp - 4, 21);
+        U.txt(`${nf.d}`, cxp, cyp + 15, 12, '#ffab4a');
         U.hit(cxp - 28, cyp - 28, 56, 56, () => {
           camX = Math.max(0, Math.min(maxCX, tpx - VW / 2));
           camY = Math.max(0, Math.min(maxCY, tpy - VH / 2));
@@ -447,11 +447,11 @@ function combat(t) {
   // info strip: AP + current action stats
   for (let i = 0; i < P.apMax; i++) {
     U.ctx.beginPath();
-    U.ctx.arc(20 + i * 20, 525, 7, 0, Math.PI * 2);
-    U.ctx.fillStyle = i < c.ap ? GRN : '#22222f';
+    U.ctx.arc(21 + i * 23, 531, 8.5, 0, Math.PI * 2);
+    U.ctx.fillStyle = i < c.ap ? GRN : '#23232f';
     U.ctx.fill();
   }
-  U.txt('AP', 20 + P.apMax * 20 + 4, 526, 12, DIM, 'left');
+  U.txt('AP', 21 + P.apMax * 23 + 6, 532, 14, DIM, 'left');
   const strip = prep ? (fvFoe ? [`${MONSTERS[fvFoe.mid].name}: orange = its range${fvThreat ? ' — it can reach you!' : ''}`, fvThreat ? RED : '#ffab4a'] : ['Scout: drag · tap foes · 👁 jumps to each', BLU]) :
     !myTurn ? (fvThreat ? ['Enemy turn — it can hit you!', RED] : ['Enemy turn…', RED]) :
     c.mode === 'atk' ? [`${w.emoji} ${w.name}: ${w.dmg} dmg · rng ${w.rng} · ${w.ap} AP`, RED] :
@@ -460,54 +460,54 @@ function combat(t) {
     selFoe ? [`${MONSTERS[selFoe.mid].name}: orange = its range${fvThreat ? ' — you are in danger!' : ''}`, fvThreat ? RED : '#ffab4a'] :
     !engaged ? ['🔦 Exploring — moves are free', BLU] :
     ['Green = hexes you can reach', GRN];
-  U.txt(strip[0], 412, 526, 12, strip[1], 'right');
+  U.txt(strip[0], 412, 532, 14, strip[1], 'right', true);
 
-  (c.lines || []).slice(-2).forEach((s, i) => U.txt(s, 12, 543 + i * 16, 11, DIM, 'left'));
+  (c.lines || []).slice(-2).forEach((s, i) => U.txt(s, 12, 552 + i * 18, 14, DIM, 'left'));
 
   if (prep) {
     // scout phase: look around, inspect, set your build, then begin
-    U.button(14, 574, 92, 62, '🎒', () => { invPage = 0; G.ret = 'COMBAT'; goto('INV'); }, { size: 19, sub: 'Gear' });
-    U.button(112, 574, 92, 62, '✨', () => { skillPage = 0; G.ret = 'COMBAT'; goto('SKILLS'); }, { size: 19, sub: 'Skills' });
-    U.button(210, 574, 92, 62, '👁', cycleFoe, { size: 19, sub: 'Next foe' });
-    U.button(308, 574, 98, 62, '⚔️', beginBattle, { size: 19, sub: 'BEGIN', fill: '#3a2f1c', stroke: '#8a6f3a' });
-    U.txt('Enemies hold still while you scout the caverns.', 210, 664, 12, DIM);
-    U.txt(`${c.foes.filter(f => !f.dead && !f.awake).length} sleeping · ${c.foes.filter(f => !f.dead && f.awake).length} alert`, 210, 686, 12, '#ffab4a');
+    U.button(14, 586, 92, 64, '🎒', () => { invPage = 0; G.ret = 'COMBAT'; goto('INV'); }, { size: 21, sub: 'Gear' });
+    U.button(112, 586, 92, 64, '✨', () => { skillPage = 0; G.ret = 'COMBAT'; goto('SKILLS'); }, { size: 21, sub: 'Skills' });
+    U.button(210, 586, 92, 64, '👁', cycleFoe, { size: 21, sub: 'Next foe' });
+    U.button(308, 586, 98, 64, '⚔️', beginBattle, { size: 21, sub: 'BEGIN', fill: '#3a2f1c', stroke: '#8a6f3a' });
+    U.txt('Enemies hold still while you scout the caverns.', 210, 678, 14, DIM);
+    U.txt(`${c.foes.filter(f => !f.dead && !f.awake).length} sleeping · ${c.foes.filter(f => !f.dead && f.awake).length} alert`, 210, 702, 15, '#ffab4a', 'center', true);
   } else {
     // action bar
     const dis = !myTurn;
     const qHit = (x, y2, type) => U.hit(x, y2, 30, 30, () => { aInfo = type; });
     const selStroke = (on) => on ? GOLD : undefined;
-    U.button(14, 574, 76, 56, '🚶', () => setMode('move'), { size: 20, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
-    U.button(94, 574, 76, 56, w.emoji, () => setMode('atk'), { size: 20, sub: `${w.dmg}dmg·${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
-    U.txt('❓', 158, 582, 10, DIM);
-    qHit(140, 570, { t: 'atk' });
+    U.button(14, 584, 76, 60, '🚶', () => setMode('move'), { size: 23, sub: 'Move', disabled: dis, stroke: selStroke(c.mode === 'move') });
+    U.button(94, 584, 76, 60, w.emoji, () => setMode('atk'), { size: 23, sub: `${w.dmg}dmg·${w.ap}⚡`, disabled: dis || c.ap < w.ap, stroke: selStroke(c.mode === 'atk') });
+    U.txt('❓', 158, 594, 12, DIM);
+    qHit(140, 580, { t: 'atk' });
     for (const s2 of [0, 1]) {
       const sk = skillFor(s2);
       const x = 174 + s2 * 80;
       if (!sk) {
-        U.panel(x, 574, 76, 56, 14, '#12121b', '#22222f');
-        U.txt('·', x + 38, 602, 18, '#33333f');
+        U.panel(x, 584, 76, 60, 14, '#12121b', '#22222f');
+        U.txt('·', x + 38, 614, 18, '#33333f');
         continue;
       }
       const issue = skillIssue(s2);
       const cd = (c.cds && c.cds[sk.id]) || 0;
-      U.button(x, 574, 76, 56, sk.emoji, () => {
+      U.button(x, 584, 76, 60, sk.emoji, () => {
         if (skillIssue(s2)) return;
         if (sk.tgt === 'self' || sk.tgt === 'burst') castSkill(s2);
         else setMode('sk' + s2);
       }, {
-        size: 20,
+        size: 23,
         sub: cd > 0 ? `CD ${cd}` : issue || `${sk.ap}⚡${sk.mp}🔮`,
         disabled: dis || !!issue,
         stroke: selStroke(c.mode === 'sk' + s2),
       });
-      U.txt('❓', x + 64, 582, 10, DIM);
-      qHit(x + 46, 570, { t: 'sk', slot: s2 });
+      U.txt('❓', x + 64, 594, 12, DIM);
+      qHit(x + 46, 580, { t: 'sk', slot: s2 });
     }
     const defGain = 2 + (getSecondary().block || 0) + getArmor().def;
-    U.button(334, 574, 72, 56, '🛡️', defend, { size: 20, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
-    U.txt('❓', 394, 582, 10, DIM);
-    qHit(376, 570, { t: 'def' });
+    U.button(334, 584, 72, 60, '🛡️', defend, { size: 23, sub: c.defended ? 'used' : `+${defGain}·1⚡`, disabled: dis || c.ap < 1 || !!c.defended });
+    U.txt('❓', 394, 594, 12, DIM);
+    qHit(376, 580, { t: 'def' });
 
     // potions + end turn
     for (let i = 0; i < 3; i++) {
@@ -515,24 +515,24 @@ function combat(t) {
       const id = P.potions[i];
       if (id) {
         const p = POTIONS[id];
-        U.button(x, 636, 82, 56, p.emoji, () => usePotion(i), {
-          size: 22, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
+        U.button(x, 650, 82, 60, p.emoji, () => usePotion(i), {
+          size: 25, sub: p.name.split(' ')[0], disabled: dis || c.ap < 1,
           stroke: (c.mode === 'bomb' && c.potIdx === i) ? GOLD : undefined,
         });
       } else {
-        U.panel(x, 636, 82, 56, 14, '#12121b', '#22222f');
-        U.txt('·', x + 41, 664, 18, '#33333f');
+        U.panel(x, 650, 82, 60, 14, '#12121b', '#22222f');
+        U.txt('·', x + 41, 680, 18, '#33333f');
       }
     }
-    U.button(282, 636, 124, 56, 'END', endTurn, { size: 18, sub: engaged ? 'turn' : 'explore', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis || !engaged });
+    U.button(282, 650, 124, 60, 'END', endTurn, { size: 21, sub: engaged ? 'turn' : 'explore', fill: '#3a2f1c', stroke: '#8a6f3a', disabled: dis || !engaged });
 
     const hint = !myTurn ? '' :
       c.mode === 'atk' ? 'Tap foes, rock, or traps in range to strike' :
       c.mode === 'sk0' || c.mode === 'sk1' ? 'Tap a target in the tinted range' :
       c.mode === 'bomb' ? 'Tap a foe in range to throw' :
-      !engaged ? 'All quiet: stride freely · pinch to zoom · compass points to foes' :
+      !engaged ? 'Stride freely · pinch to zoom · compass shows foes' :
       'Tap green: move · tap foe: its range · again: details';
-    U.txt(hint, 210, 712, 12, DIM);
+    U.txt(hint, 210, 730, 14, DIM);
   }
 
   if (c.info >= 0 && c.foes[c.info]) foeInfo(c.foes[c.info]);
@@ -561,16 +561,16 @@ function foeInfo(f) {
   const y0 = overlayPanel(h);
   U.txt(m.emoji, 76, y0 + 46, 40);
   U.txt(m.name, 110, y0 + 34, 20, TXT, 'left', true);
-  U.txt(`❤️ ${f.hp}/${f.maxHp}   🛡️ DEF ${m.def}   ⚡ ${m.ap} AP`, 110, y0 + 60, 13, DIM, 'left');
-  U.txt(f.awake ? '👁️ Alert — will act on its turn' : `💤 Asleep ${f.napT} more turn${f.napT === 1 ? '' : 's'} — or wakes within ${AGRO} hexes / when hurt`, 110, y0 + 80, 12, f.awake ? '#ff9b6b' : DIM, 'left');
-  U.txt('Moves', 52, y0 + 112, 14, GOLD, 'left', true);
+  U.txt(`❤️ ${f.hp}/${f.maxHp}   🛡️ DEF ${m.def}   ⚡ ${m.ap} AP`, 110, y0 + 60, 14, DIM, 'left');
+  U.txt(f.awake ? '👁️ Alert — will act on its turn' : `💤 Asleep ${f.napT} more turn${f.napT === 1 ? '' : 's'} — or wakes within ${AGRO} hexes / when hurt`, 110, y0 + 80, 13, f.awake ? '#ff9b6b' : DIM, 'left');
+  U.txt('Moves', 52, y0 + 112, 15, GOLD, 'left', true);
   m.moves.forEach((mv, i) => {
-    U.txt(`${mv.emoji} ${mv.name}`, 52, y0 + 138 + i * 26, 14, TXT, 'left');
-    U.txt(describeMove(mv), 368, y0 + 138 + i * 26, 12, DIM, 'right');
+    U.txt(`${mv.emoji} ${mv.name}`, 52, y0 + 138 + i * 26, 15, TXT, 'left');
+    U.txt(describeMove(mv), 368, y0 + 138 + i * 26, 13, DIM, 'right');
   });
   let yy = y0 + 138 + m.moves.length * 26;
   if (hasMelee) {
-    U.txt('⚔️ Strikes anyone who steps out of its reach', 52, yy, 12, '#ff9b6b', 'left');
+    U.txt('⚔️ Strikes anyone who steps out of its reach', 52, yy, 13, '#ff9b6b', 'left');
     yy += 24;
   }
   const st = [];
@@ -578,8 +578,8 @@ function foeInfo(f) {
   if (f.psnT > 0) st.push(`☠️ poison ${f.psn}×${f.psnT}`);
   if (f.stun > 0) st.push('🧊 frozen');
   if (f.block > 0) st.push(`🛡️ ${f.block} block`);
-  if (st.length) U.txt(st.join('   '), 52, yy, 12, '#ff9b6b', 'left');
-  U.txt('tap anywhere to close', 210, y0 + h - 18, 11, DIM);
+  if (st.length) U.txt(st.join('   '), 52, yy, 13, '#ff9b6b', 'left');
+  U.txt('tap anywhere to close', 210, y0 + h - 18, 12, DIM);
   U.hit(0, 0, U.W, U.H, closeInfo);
 }
 
@@ -625,8 +625,8 @@ function actionInfo(info, c) {
   const y0 = overlayPanel(h);
   U.txt(emoji, 72, y0 + 46, 36);
   U.txt(title, 104, y0 + 46, 20, TXT, 'left', true);
-  lines.forEach((s, i) => U.txt(s, 52, y0 + 92 + i * 24, 13, i === 0 && info.t === 'sk' ? TXT : DIM, 'left'));
-  U.txt('tap anywhere to close', 210, y0 + h - 16, 11, DIM);
+  lines.forEach((s, i) => U.txt(s, 52, y0 + 92 + i * 24, 14, i === 0 && info.t === 'sk' ? TXT : DIM, 'left'));
+  U.txt('tap anywhere to close', 210, y0 + h - 16, 12, DIM);
   U.hit(0, 0, U.W, U.H, () => { aInfo = null; });
 }
 
@@ -636,10 +636,10 @@ function choice() {
   if (!p) { goto('MAP'); return; }
   header(false);
   U.txt(p.title, 210, 106, 25, TXT, 'center', true);
-  if (p.sub) U.txt(p.sub, 210, 140, 15, DIM);
+  if (p.sub) U.txt(p.sub, 210, 140, 16, DIM);
   let y = 168;
   (p.notes || []).slice(0, 4).forEach((s) => {
-    U.txt(s, 210, y, 13, GOLD);
+    U.txt(s, 210, y, 15, GOLD);
     y += 20;
   });
   y += 8;
@@ -648,12 +648,12 @@ function choice() {
     if (why) U.ctx.globalAlpha = 0.45;
     U.panel(24, y, 372, 94, 16, '#1c1c2b', '#34344e');
     U.txt(o.emoji, 64, y + 47, 34);
-    U.txt(o.label, 102, y + 32, 18, TXT, 'left', true);
-    U.txt(o.desc, 102, y + 62, 12, DIM, 'left');
+    U.txt(o.label, 102, y + 32, 19, TXT, 'left', true);
+    U.txt(o.desc, 102, y + 62, 14, DIM, 'left');
     if (o.act.t === 'buy') U.txt(`💰${o.act.price}`, 388, y + 30, 15, G.player.gold >= o.act.price ? GOLD : '#d9534f', 'right', true);
     if (o.act.t === 'scrapbuy') U.txt(`🔩${o.act.scrap}`, 388, y + 30, 15, G.player.scrap >= o.act.scrap ? TXT : '#d9534f', 'right', true);
     U.ctx.globalAlpha = 1;
-    if (why && why !== 'Not enough gold' && why !== 'Not enough scrap') U.txt(why, 388, y + 62, 11, '#d9534f', 'right');
+    if (why && why !== 'Not enough gold' && why !== 'Not enough scrap') U.txt(why, 388, y + 62, 12, '#d9534f', 'right');
     if (!why) U.hit(24, y, 372, 94, () => pickOption(i));
     y += 106;
   });
@@ -679,14 +679,14 @@ function shop() {
       if (why) U.ctx.globalAlpha = 0.45;
       U.panel(16, y, 388, 90, 16, '#1c1c2b', '#34344e');
       U.txt(s.emoji, 54, y + 45, 32);
-      U.txt(s.name, 92, y + 30, 17, TXT, 'left', true);
-      U.txt(s.desc, 92, y + 60, 12, DIM, 'left');
+      U.txt(s.name, 92, y + 30, 18, TXT, 'left', true);
+      U.txt(s.desc, 92, y + 60, 14, DIM, 'left');
       U.txt(s.sold ? 'SOLD' : `💰${s.price}`, 392, y + 30, 15, s.sold ? DIM : G.player.gold >= s.price ? GOLD : '#d9534f', 'right', true);
       U.ctx.globalAlpha = 1;
-      if (why && why !== 'SOLD' && why !== 'Not enough gold') U.txt(why, 392, y + 60, 11, '#d9534f', 'right');
+      if (why && why !== 'SOLD' && why !== 'Not enough gold') U.txt(why, 392, y + 60, 12, '#d9534f', 'right');
       if (!why) U.hit(16, y, 388, 90, () => shopBuy(i));
     });
-    U.txt('“Spend it now — gold buys nothing in the grave.”', 210, 570, 12, DIM);
+    U.txt('“Spend it now — gold buys nothing in the grave.”', 210, 570, 14, DIM);
   } else {
     const bag = G.player.bag;
     if (!bag.length) U.txt('Nothing to sell — foes drop gear.', 210, 300, 14, DIM);
@@ -698,8 +698,8 @@ function shop() {
       const y = 156 + j * 98;
       U.panel(16, y, 388, 90, 16, '#1c1c2b', '#34344e');
       U.txt(g.emoji, 54, y + 45, 32);
-      U.txt(g.name, 92, y + 30, 17, TXT, 'left', true);
-      U.txt(`T${g.tier} · ${gearDesc(g)}`, 92, y + 60, 12, DIM, 'left');
+      U.txt(g.name, 92, y + 30, 18, TXT, 'left', true);
+      U.txt(`T${g.tier} · ${gearDesc(g)}`, 92, y + 60, 14, DIM, 'left');
       U.txt(`+${sellPrice(g)}💰`, 392, y + 45, 15, GOLD, 'right', true);
       U.hit(16, y, 388, 90, () => shopSell(i));
     });
@@ -720,13 +720,13 @@ function inv() {
   U.panel(16, 84, 388, 108, 16, '#191926', '#2c2c40');
   rows.forEach(([label, g], i) => {
     const y = 104 + i * 34;
-    U.txt(label, 30, y, 12, DIM, 'left');
-    U.txt(`${g.emoji} ${g.name}`, 96, y, 14, TXT, 'left');
-    U.txt(g.cat ? gearDesc(g) : (g.block !== undefined ? `+${g.block} block` : g.def !== undefined ? `${g.def} DEF` : ''), 392, y, 11, DIM, 'right');
+    U.txt(label, 30, y, 13, DIM, 'left');
+    U.txt(`${g.emoji} ${g.name}`, 96, y, 15, TXT, 'left');
+    U.txt(g.cat ? gearDesc(g) : (g.block !== undefined ? `+${g.block} block` : g.def !== undefined ? `${g.def} DEF` : ''), 392, y, 13, DIM, 'right');
   });
   const bag = G.player.bag;
-  U.txt(`Bag ${bag.length}/${BAG_MAX} — equip or break into scrap`, 210, 212, 12, DIM);
-  if (!bag.length) U.txt('Bag is empty. Every slain foe drops gear.', 210, 330, 13, DIM);
+  U.txt(`Bag ${bag.length}/${BAG_MAX} — equip or break into scrap`, 210, 212, 14, DIM);
+  if (!bag.length) U.txt('Bag is empty. Every slain foe drops gear.', 210, 330, 15, DIM);
   const pages = Math.max(1, Math.ceil(bag.length / 4));
   invPage = Math.min(invPage, pages - 1);
   bag.slice(invPage * 4, invPage * 4 + 4).forEach((id, j) => {
@@ -735,10 +735,10 @@ function inv() {
     const y = 232 + j * 98;
     U.panel(16, y, 388, 90, 16, '#1c1c2b', '#34344e');
     U.txt(g.emoji, 48, y + 45, 30);
-    U.txt(g.name, 84, y + 28, 16, TXT, 'left', true);
-    U.txt(`T${g.tier} · ${gearDesc(g)}`, 84, y + 56, 11, DIM, 'left');
-    U.button(252, y + 17, 74, 56, 'Equip', () => equipFromBag(i), { size: 14, fill: '#24405c', stroke: '#5b8ab8' });
-    U.button(332, y + 17, 64, 56, `🔩+${scrapValue(g)}`, () => scrapFromBag(i), { size: 13 });
+    U.txt(g.name, 84, y + 28, 17, TXT, 'left', true);
+    U.txt(`T${g.tier} · ${gearDesc(g)}`, 84, y + 56, 13, DIM, 'left');
+    U.button(252, y + 17, 74, 56, 'Equip', () => equipFromBag(i), { size: 15, fill: '#24405c', stroke: '#5b8ab8' });
+    U.button(332, y + 17, 64, 56, `🔩+${scrapValue(g)}`, () => scrapFromBag(i), { size: 14 });
   });
   invPage = pager(invPage, pages, (v) => { invPage = v; });
   backBtn();
@@ -748,7 +748,7 @@ function inv() {
 function skills() {
   header(false);
   U.txt('✨ Skills', 210, 64, 22, TXT, 'center', true);
-  U.txt('Equip 2 for battle — tap a slot to clear it', 210, 92, 12, DIM);
+  U.txt('Equip 2 for battle — tap a slot to clear it', 210, 92, 14, DIM);
   for (const s of [0, 1]) {
     const id = G.player.eq[s];
     const sk = id ? SKILLS[id] : null;
@@ -766,14 +766,14 @@ function skills() {
     const equipped = G.player.eq.includes(id);
     U.panel(16, y, 388, 100, 16, equipped ? '#232338' : '#1c1c2b', equipped ? GOLD : '#34344e');
     U.txt(sk.emoji, 48, y + 50, 30);
-    U.txt(sk.name, 84, y + 28, 16, TXT, 'left', true);
-    U.txt(sk.desc, 84, y + 54, 11, DIM, 'left');
-    U.txt(`${sk.ap} AP · ${sk.mp} MP · cd ${sk.cd}`, 84, y + 78, 11, PUR, 'left');
+    U.txt(sk.name, 84, y + 28, 17, TXT, 'left', true);
+    U.txt(sk.desc, 84, y + 54, 13, DIM, 'left');
+    U.txt(`${sk.ap} AP · ${sk.mp} MP · cd ${sk.cd}`, 84, y + 78, 13, PUR, 'left');
     U.button(308, y + 22, 88, 56, equipped ? 'Unequip' : 'Equip', () => toggleSkill(id), {
-      size: 13, fill: equipped ? '#232338' : '#24405c', stroke: equipped ? '#5a5a7a' : '#5b8ab8',
+      size: 14, fill: equipped ? '#232338' : '#24405c', stroke: equipped ? '#5a5a7a' : '#5b8ab8',
     });
   });
-  U.txt(`${known.length}/10 skills known — win fights, visit shrines, craft scrolls`, 210, 630, 11, DIM);
+  U.txt(`${known.length}/10 skills known — win fights, visit shrines, craft scrolls`, 210, 630, 13, DIM);
   skillPage = pager(skillPage, pages, (v) => { skillPage = v; });
   backBtn();
 }
@@ -782,7 +782,7 @@ function skills() {
 function craft() {
   header(false);
   U.txt('🔨 Crafting', 210, 64, 22, TXT, 'center', true);
-  U.txt(`You have 🔩 ${G.player.scrap} scrap — break down gear to get more`, 210, 92, 12, DIM);
+  U.txt(`You have 🔩 ${G.player.scrap} scrap — break down gear to get more`, 210, 92, 14, DIM);
   const pages = Math.max(1, Math.ceil(RECIPES.length / 4));
   craftPage = Math.min(craftPage, pages - 1);
   RECIPES.slice(craftPage * 4, craftPage * 4 + 4).forEach((rec, j) => {
@@ -793,13 +793,13 @@ function craft() {
     if (why) U.ctx.globalAlpha = 0.55;
     U.panel(16, y, 388, 100, 16, '#1c1c2b', '#34344e');
     U.txt(out.emoji, 48, y + 50, 30);
-    U.txt(out.name, 84, y + 28, 16, TXT, 'left', true);
-    U.txt(out.cat === 'k' ? out.desc : out.cat === 'p' ? out.desc : `T${out.tier} · ${gearDesc(out)}`, 84, y + 56, 11, DIM, 'left');
-    U.txt(out.cat === 'k' ? 'skill scroll' : out.cat === 'p' ? 'potion' : 'gear', 84, y + 78, 10, '#55536a', 'left');
-    U.txt(`🔩${rec.scrap}`, 322, y + 30, 14, G.player.scrap >= rec.scrap ? TXT : '#d9534f', 'right', true);
+    U.txt(out.name, 84, y + 28, 17, TXT, 'left', true);
+    U.txt(out.cat === 'k' ? out.desc : out.cat === 'p' ? out.desc : `T${out.tier} · ${gearDesc(out)}`, 84, y + 56, 13, DIM, 'left');
+    U.txt(out.cat === 'k' ? 'skill scroll' : out.cat === 'p' ? 'potion' : 'gear', 84, y + 78, 12, '#6b687e', 'left');
+    U.txt(`🔩${rec.scrap}`, 322, y + 30, 16, G.player.scrap >= rec.scrap ? TXT : '#d9534f', 'right', true);
     U.ctx.globalAlpha = 1;
-    if (why) U.txt(why, 322, y + 50, 10, '#d9534f', 'right');
-    U.button(332, y + 44, 64, 48, 'Craft', () => craftItem(i), { size: 13, disabled: !!why, fill: '#3a2f1c', stroke: '#8a6f3a' });
+    if (why) U.txt(why, 322, y + 50, 12, '#d9534f', 'right');
+    U.button(332, y + 44, 64, 48, 'Craft', () => craftItem(i), { size: 14, disabled: !!why, fill: '#3a2f1c', stroke: '#8a6f3a' });
   });
   craftPage = pager(craftPage, pages, (v) => { craftPage = v; });
   backBtn();
@@ -809,24 +809,24 @@ function craft() {
 function title() {
   U.txt('⚔️', 210, 215, 80);
   U.txt('DEPTHS', 210, 305, 52, GOLD, 'center', true);
-  U.txt('a pocket tactics roguelike', 210, 347, 15, DIM);
+  U.txt('a pocket tactics roguelike', 210, 347, 16, DIM);
   if (canContinue()) {
     U.button(110, 420, 200, 60, 'Continue', continueRun, { size: 20, fill: '#2a3a2a', stroke: '#4f7a4f' });
   }
   U.button(110, canContinue() ? 498 : 442, 200, 60, 'New Run', () => newRun(), { size: 20 });
-  U.txt('⚔️ fight   ❓ event   💰 treasure   🛒 shop', 210, 612, 13, DIM);
-  U.txt('Explore vast hex caverns: sneak, dig, and duel.', 210, 636, 13, DIM);
-  U.txt('Loot every foe. Craft. Slay the dragon on floor 10.', 210, 658, 13, DIM);
-  U.txt('v0.5 · built with Claude', 210, 774, 11, '#55536a');
+  U.txt('⚔️ fight   ❓ event   💰 treasure   🛒 shop', 210, 612, 15, DIM);
+  U.txt('Explore dense hex caverns: sneak, dig, and duel.', 210, 638, 15, DIM);
+  U.txt('Loot every foe. Craft. Slay the dragon on floor 10.', 210, 662, 15, DIM);
+  U.txt('v0.6 · built with Claude', 210, 774, 12, '#6b687e');
 }
 
 function endScreen(emoji, label, color) {
   U.txt(emoji, 210, 230, 88);
   U.txt(label, 210, 330, 36, color, 'center', true);
   const s = G.stats || { floor: 0, kills: 0, goldEarned: 0 };
-  U.txt(`Reached floor ${s.floor}/10`, 210, 396, 16, TXT);
-  U.txt(`Foes slain: ${s.kills}`, 210, 424, 16, TXT);
-  U.txt(`Gold earned: ${s.goldEarned}`, 210, 452, 16, TXT);
-  U.txt(`Skills known: ${G.player ? G.player.known.length : 0}/10`, 210, 480, 16, TXT);
+  U.txt(`Reached floor ${s.floor}/10`, 210, 396, 18, TXT);
+  U.txt(`Foes slain: ${s.kills}`, 210, 427, 18, TXT);
+  U.txt(`Gold earned: ${s.goldEarned}`, 210, 458, 18, TXT);
+  U.txt(`Skills known: ${G.player ? G.player.known.length : 0}/10`, 210, 489, 18, TXT);
   U.button(110, 560, 200, 60, 'New Run', () => newRun(), { size: 20 });
 }
