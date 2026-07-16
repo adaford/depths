@@ -1,18 +1,20 @@
 # ⚔️ DEPTHS — a pocket tactics roguelike
 
 Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
-❓ events, treasure, merchants), then scout each battle-map before you commit:
-scroll around the rooms and hallways, tap enemies to see their walk range and
-full movesets (red flash = they can reach you), and swap your gear and skills —
-then begin. Spend AP to move (green tiles show your reach) and strike with
-your weapon: diagonals count, fleeing melee provokes opportunity attacks both
-ways, and walls, boulders, urns, and traps all have HP and can be smashed.
-Cast your two equipped skills (mana + cooldowns), drink potions, shove foes
-into spikes, and loot chests mid-fight. Every room rolls different: big or
-cramped, bare or cluttered, and each enemy may start alert or asleep. Every
-foe drops gear — equip it, sell it, or break it into scrap and craft weapons,
-armor, potions, and new skills. Slay the dragon on floor 10. Death is
-permanent. Runs are short.
+❓ events, treasure, merchants), then delve VAST hexagonal caverns — every
+battle-map is a freshly generated labyrinth of halls, winding corridors, and
+caves, up to a hundred hexes across. Scout before you commit: scroll the whole
+map, tap enemies to see their walk range and full movesets (red flash = they
+can reach you), and swap gear and skills. While nothing is awake you explore
+freely with long strides and a compass pointing to the nearest foe; the moment
+something stirs, the AP economy kicks in — move hex by hex (green shows your
+reach), strike any of the 6 directions, and mind opportunity attacks when you
+flee melee. Rock walls, boulders, urns, and traps all have HP: dig shortcuts,
+dismantle spikes, smash pottery for gold. Cast your two equipped skills
+(mana + cooldowns), shove foes into traps, loot chests mid-fight. Enemies may
+start alert or asleep, clustered room by room. Every foe drops gear — equip
+it, sell it, or break it into scrap and craft weapons, armor, potions, and new
+skills. Slay the dragon on floor 10. Death is permanent.
 
 **Play it:** https://adaford.github.io/depths/
 

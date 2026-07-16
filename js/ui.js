@@ -45,7 +45,7 @@ export function toXY(e) {
 export function tap(pt) {
   for (let i = hits.length - 1; i >= 0; i--) {
     const h = hits[i];
-    if (pt.x >= h.x && pt.x <= h.x + h.w && pt.y >= h.y && pt.y <= h.y + h.h) { h.fn(); return; }
+    if (pt.x >= h.x && pt.x <= h.x + h.w && pt.y >= h.y && pt.y <= h.y + h.h) { h.fn(pt); return; }
   }
 }
 

@@ -1,12 +1,14 @@
-// Tactical dungeon combat on a variable-size board (rooms + hallways, scrollable).
-// Fights open in a SCOUT phase: pan the map, inspect foes, swap your build, then begin.
-// Everything costs AP: moving (1/tile), attacking (weapon ap), skills (ap+mp+cooldown),
-// potions (1), opening chests (1), defending (1, once per turn).
-// Attacks reach diagonals (chebyshev range); stepping out of an enemy's reach
-// provokes an opportunity attack — in both directions. Walls, obstacles, and traps
-// have hp and can be smashed with weapon attacks (the map border cannot).
-// Some foes roll asleep at battle start (per-monster `nap` chance) and wake when
-// you come within AGRO range or hurt them; the rest come at you from turn one.
+// Tactical dungeon combat on huge HEX maps (60-100 hexes a side) of rooms,
+// winding corridors, and caves — every map rolls a different generator style.
+// Fights open in a SCOUT phase: pan the map, inspect foes, swap your build, begin.
+// While no enemy is awake you EXPLORE freely (moves cost nothing, long strides);
+// the moment someone wakes, the AP economy kicks in: moving (1/hex), attacking
+// (weapon ap), skills (ap+mp+cooldown), potions (1), chests (1), defend (1, once
+// per turn). Ranges are hex distance; adjacency is the 6 surrounding hexes;
+// stepping out of an enemy's reach provokes an opportunity attack — both ways.
+// Rock walls, obstacles, and traps have hp and can be smashed (dig shortcuts!);
+// the map border is the only unbreakable thing. Foes roll asleep per-monster
+// (`nap`) and wake within AGRO range or when hurt.
 // All combat state lives in G.combat (JSON-safe). FX is a render-side queue drained by screens.js.
 import {
   G, save, goto, clearSave, afterCombatVictory, getPrimary, getSecondary, getArmor,
@@ -17,8 +19,9 @@ import { ri, pick, chance, rnd } from './rng.js';
 import * as Gr from './grid.js';
 
 export const FX = [];
-export const AGRO = 6; // chebyshev distance at which a sleeping foe wakes
-const WALL_HP = 12;
+export const AGRO = 6;          // hex distance at which a sleeping foe wakes
+export const EXPLORE_STEPS = 12; // free-move stride per tap while nothing is awake
+export const WALL_HP = 12;
 const OBS_TYPES = [['🪨', 10], ['🪵', 6], ['⚱️', 4]];
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 const C = () => G.combat;
@@ -29,6 +32,24 @@ function log(s) {
   if (c.lines.length > 2) c.lines.shift();
 }
 
+// The fight is "engaged" while any foe is awake; otherwise you're exploring.
+export function isEngaged() {
+  const c = C();
+  return !!c && c.foes.some(f => !f.dead && f.awake);
+}
+
+export function nearestFoe() {
+  const c = C();
+  if (!c) return null;
+  let best = null, bd = 1e9;
+  for (const f of c.foes) {
+    if (f.dead) continue;
+    const d = Gr.dist(c.px, c.py, f.x, f.y);
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best ? { f: best, d: bd } : null;
+}
+
 // ---------- encounter composition ----------
 const POOLS = { easy: [], med: [], elite: [], minion: [], boss: [] };
 for (const [id, m] of Object.entries(MONSTERS)) POOLS[m.pool].push(id);
@@ -37,29 +58,26 @@ for (const [id, m] of Object.entries(MONSTERS)) POOLS[m.pool].push(id);
 function rollFoes(r, kind, row) {
   if (kind === 'boss') {
     const ids = ['m_dragon'];
-    for (let i = 0, n = ri(r, 2, 3); i < n; i++) ids.push('m_whelp');
+    for (let i = 0, n = ri(r, 3, 5); i < n; i++) ids.push('m_whelp');
     return ids;
   }
   const ids = [];
   const easy = () => pick(r, POOLS.easy), med = () => pick(r, POOLS.med);
-  if (row <= 1) {
-    const n = chance(r, 0.2) ? 1 : chance(r, 0.7) ? 2 : 3;
-    for (let i = 0; i < n; i++) ids.push(easy());
-  } else if (row <= 3) {
-    const n = ri(r, 2, chance(r, 0.25) ? 4 : 3);
-    for (let i = 0; i < n; i++) ids.push(easy());
-  } else if (row <= 5) {
-    const n = ri(r, 2, 4);
+  if (row <= 1) { const n = ri(r, 2, 3); for (let i = 0; i < n; i++) ids.push(easy()); }
+  else if (row <= 3) { const n = ri(r, 3, 4); for (let i = 0; i < n; i++) ids.push(easy()); }
+  else if (row <= 5) {
+    const n = ri(r, 4, 6);
     ids.push(med());
-    for (let i = 1; i < n; i++) ids.push(chance(r, 0.55) ? easy() : med());
+    for (let i = 1; i < n; i++) ids.push(chance(r, 0.5) ? easy() : med());
   } else {
-    const n = ri(r, 2, 5);
+    const n = ri(r, 5, 8);
     ids.push(med(), med());
-    for (let i = 2; i < n; i++) ids.push(chance(r, 0.6) ? med() : easy());
-    if (chance(r, 0.35)) ids[0] = pick(r, POOLS.elite);
+    for (let i = 2; i < n; i++) ids.push(chance(r, 0.55) ? med() : easy());
+    if (chance(r, 0.4)) ids[0] = pick(r, POOLS.elite);
+    if (chance(r, 0.18)) ids[1] = pick(r, POOLS.elite);
   }
   if (kind === 'ambush') ids.push(row <= 3 ? easy() : med());
-  return ids.slice(0, 5);
+  return ids.slice(0, 9);
 }
 
 function rollDropGear(r, tier) {
@@ -72,67 +90,127 @@ function rollDropGear(r, tier) {
   return pick(r, pool).id;
 }
 
-// ---------- dungeon generation (rooms + hallways, heavy variance) ----------
-function connectedFloors(w, h, blockedIdx) {
-  const blocked = new Set(blockedIdx);
-  let start = -1;
-  for (let i = 0; i < w * h; i++) if (!blocked.has(i)) { start = i; break; }
-  if (start < 0) return false;
-  const seen = new Set([start]);
-  const q = [start];
+// ---------- dungeon generation: huge hex maps, three styles ----------
+function genDungeon(r, kind) {
+  const w = kind === 'boss' ? ri(r, 60, 80) : ri(r, 60, 100);
+  const h = kind === 'boss' ? ri(r, 60, 80) : ri(r, 60, 100);
+  const floors = new Set();
+  const carve = (x, y) => { if (x >= 1 && x < w - 1 && y >= 1 && y < h - 1) floors.add(y * w + x); };
+  const carveBlob = (cx, cy, rad) => {
+    for (let y = cy - rad; y <= cy + rad; y++) {
+      for (let x = cx - rad - 1; x <= cx + rad + 1; x++) {
+        if (Gr.dist(x, y, cx, cy) <= rad) carve(x, y);
+      }
+    }
+  };
+  const rooms = [];
+  const addRooms = (n) => {
+    for (let i = 0; i < n; i++) {
+      const rad = ri(r, 2, 6);
+      const cx = ri(r, rad + 2, w - rad - 3), cy = ri(r, rad + 2, h - rad - 3);
+      rooms.push({ x: cx, y: cy, rad });
+      carveBlob(cx, cy, rad);
+    }
+  };
+  const corridor = (x1, y1, x2, y2) => {
+    let x = x1, y = y1, guard = (w + h) * 4;
+    const wide = chance(r, 0.35);
+    while ((x !== x2 || y !== y2) && guard-- > 0) {
+      carve(x, y);
+      const ns = Gr.neighbors(x, y).filter(([nx, ny]) => nx >= 1 && nx < w - 1 && ny >= 1 && ny < h - 1);
+      if (!ns.length) break;
+      if (wide) { const [ax, ay] = pick(r, ns); carve(ax, ay); }
+      let best = ns[0], bd = 1e9;
+      for (const nb of ns) { const d = Gr.dist(nb[0], nb[1], x2, y2); if (d < bd) { bd = d; best = nb; } }
+      const step = chance(r, 0.3) ? pick(r, ns) : best;
+      x = step[0];
+      y = step[1];
+    }
+    carve(x2, y2);
+  };
+  const style = rnd(r);
+  if (style < 0.55) { // halls and winding corridors
+    addRooms(ri(r, 8, 18));
+    const order = rooms.map((q, i) => i);
+    for (let i = order.length - 1; i > 0; i--) { const j = ri(r, 0, i); [order[i], order[j]] = [order[j], order[i]]; }
+    for (let i = 1; i < order.length; i++) {
+      const a = rooms[order[i - 1]], b = rooms[order[i]];
+      corridor(a.x, a.y, b.x, b.y);
+    }
+    for (let i = 0; i < rooms.length; i++) {
+      if (!chance(r, 0.25)) continue;
+      const j = ri(r, 0, rooms.length - 1);
+      if (j !== i) corridor(rooms[i].x, rooms[i].y, rooms[j].x, rooms[j].y);
+    }
+  } else if (style < 0.8) { // organic caves (drunkard walk)
+    let x = (w / 2) | 0, y = (h / 2) | 0;
+    const target = Math.floor(w * h * 0.16);
+    let guard = target * 16;
+    while (floors.size < target && guard-- > 0) {
+      carve(x, y);
+      const [nx, ny] = pick(r, Gr.neighbors(x, y));
+      if (nx < 1 || nx >= w - 1 || ny < 1 || ny >= h - 1) { x = (w / 2) | 0; y = (h / 2) | 0; continue; }
+      x = nx;
+      y = ny;
+    }
+    const fl = [...floors];
+    for (let i = 0, n = ri(r, 8, 14); i < n; i++) {
+      const f = pick(r, fl);
+      rooms.push({ x: f % w, y: (f / w) | 0, rad: 3 });
+    }
+  } else { // hybrid: halls with cave pockets eaten into them
+    addRooms(ri(r, 6, 12));
+    for (let i = 1; i < rooms.length; i++) corridor(rooms[i - 1].x, rooms[i - 1].y, rooms[i].x, rooms[i].y);
+    for (let n = 0; n < 3; n++) {
+      let { x, y } = pick(r, rooms);
+      let steps = ri(r, 150, 400);
+      while (steps-- > 0) {
+        carve(x, y);
+        const [nx, ny] = pick(r, Gr.neighbors(x, y));
+        if (nx < 1 || nx >= w - 1 || ny < 1 || ny >= h - 1) continue;
+        x = nx;
+        y = ny;
+      }
+    }
+  }
+  return { w, h, floors, rooms };
+}
+
+function flood(w, h, floors, blocked, startIdx) {
+  const seen = new Set([startIdx]);
+  const q = [startIdx];
   while (q.length) {
     const i = q.pop(), x = i % w, y = (i / w) | 0;
-    for (const [dx, dy] of Gr.DIRS) {
-      const nx = x + dx, ny = y + dy, j = ny * w + nx;
-      if (nx < 0 || nx >= w || ny < 0 || ny >= h || blocked.has(j) || seen.has(j)) continue;
+    for (const [nx, ny] of Gr.neighbors(x, y)) {
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const j = ny * w + nx;
+      if (seen.has(j) || !floors.has(j) || (blocked && blocked.has(j))) continue;
       seen.add(j);
       q.push(j);
     }
   }
-  return seen.size === w * h - blocked.size;
-}
-
-function genDungeon(r, kind) {
-  const w = kind === 'boss' ? ri(r, 11, 14) : ri(r, 8, 14);
-  const h = kind === 'boss' ? ri(r, 11, 14) : ri(r, 9, 14);
-  const carved = new Set();
-  const rooms = [];
-  const nRooms = kind === 'boss' ? ri(r, 3, 4) : ri(r, 2, 5);
-  for (let n = 0; n < nRooms; n++) {
-    for (let t = 0; t < 40; t++) {
-      const rw = ri(r, 3, Math.min(7, w - 1)), rh = ri(r, 3, Math.min(7, h - 1));
-      const rx = ri(r, 0, w - rw), ry = ri(r, 0, h - rh);
-      if (rooms.some(q => rx < q.x + q.w + 1 && q.x < rx + rw + 1 && ry < q.y + q.h + 1 && q.y < ry + rh + 1)) continue;
-      rooms.push({ x: rx, y: ry, w: rw, h: rh });
-      break;
-    }
-  }
-  if (!rooms.length) rooms.push({ x: 1, y: 1, w: Math.min(6, w - 2), h: Math.min(6, h - 2) });
-  for (const rm of rooms) {
-    for (let y = rm.y; y < rm.y + rm.h; y++) for (let x = rm.x; x < rm.x + rm.w; x++) carved.add(y * w + x);
-  }
-  rooms.sort((a, b) => (b.y + b.h / 2) - (a.y + a.h / 2)); // bottom-most room first — player starts there
-  const inRoom = (x, y) => rooms.some(rm => x >= rm.x && x < rm.x + rm.w && y >= rm.y && y < rm.y + rm.h);
-  const cx = (rm) => Math.min(w - 1, rm.x + (rm.w >> 1)), cy = (rm) => Math.min(h - 1, rm.y + (rm.h >> 1));
-  for (let i = 1; i < rooms.length; i++) {
-    const x1 = cx(rooms[i - 1]), y1 = cy(rooms[i - 1]), x2 = cx(rooms[i]), y2 = cy(rooms[i]);
-    if (chance(r, 0.5)) {
-      for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) carved.add(y1 * w + x);
-      for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) carved.add(y * w + x2);
-    } else {
-      for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) carved.add(y * w + x1);
-      for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) carved.add(y2 * w + x);
-    }
-  }
-  const wallIdx = [];
-  for (let i = 0; i < w * h; i++) if (!carved.has(i)) wallIdx.push(i);
-  return { w, h, wallIdx, rooms, inRoom };
+  return seen;
 }
 
 export function startCombat(kind, row) {
   const r = G.rng;
   const d = genDungeon(r, kind);
-  const used = new Set(d.wallIdx.map(i => Gr.k(i % d.w, (i / d.w) | 0)));
+
+  // player starts near the center of the bottom-most room
+  d.rooms.sort((a, b) => b.y - a.y);
+  const floorList = () => [...d.floors].map(i => [i % d.w, (i / d.w) | 0]);
+  let all = floorList();
+  const nearRoom = (rm, cells) => cells.filter(([x, y]) => Gr.dist(x, y, rm.x, rm.y) <= rm.rad);
+  let startCell = nearRoom(d.rooms[0], all)[0] || all[0];
+  for (const [x, y] of nearRoom(d.rooms[0], all)) {
+    if (Gr.dist(x, y, d.rooms[0].x, d.rooms[0].y) < Gr.dist(startCell[0], startCell[1], d.rooms[0].x, d.rooms[0].y)) startCell = [x, y];
+  }
+  // prune anything the player can't walk to, and rooms whose centers got cut off
+  d.floors = flood(d.w, d.h, d.floors, null, startCell[1] * d.w + startCell[0]);
+  d.rooms = d.rooms.filter(rm => d.floors.has(rm.y * d.w + rm.x));
+  all = floorList();
+
+  const used = new Set([Gr.k(startCell[0], startCell[1])]);
   const takeFrom = (cells) => {
     const free = cells.filter(([x, y]) => !used.has(Gr.k(x, y)));
     if (!free.length) return null;
@@ -140,67 +218,70 @@ export function startCombat(kind, row) {
     used.add(Gr.k(x, y));
     return { x, y };
   };
-  const roomCells = (rm) => {
-    const out = [];
-    for (let y = rm.y; y < rm.y + rm.h; y++) for (let x = rm.x; x < rm.x + rm.w; x++) out.push([x, y]);
-    return out;
-  };
-  const allFloor = [];
-  for (let y = 0; y < d.h; y++) for (let x = 0; x < d.w; x++) if (!d.wallIdx.includes(y * d.w + x)) allFloor.push([x, y]);
-  const hallCells = allFloor.filter(([x, y]) => !d.inRoom(x, y));
+  const pxy = { x: startCell[0], y: startCell[1] };
+  const farFrom = (cells, dd) => cells.filter(([x, y]) => Gr.dist(x, y, pxy.x, pxy.y) >= dd);
 
-  const pxy = takeFrom(roomCells(d.rooms[0])) || takeFrom(allFloor);
-  const farFrom = (cells, dist) => cells.filter(([x, y]) => Gr.cheb(x, y, pxy.x, pxy.y) >= dist);
-
+  // foes arrive in clusters of 1-3, one room per cluster, far rooms first for the boss
   const foes = [];
-  const foeRooms = d.rooms.slice(1);
-  const anyRoomCells = foeRooms.length ? foeRooms.flatMap(roomCells) : roomCells(d.rooms[0]);
-  rollFoes(r, kind, row).forEach((mid, i) => {
-    const rm = foeRooms.length ? foeRooms[i % foeRooms.length] : d.rooms[0];
-    const p = takeFrom(farFrom(roomCells(rm), 4)) || takeFrom(farFrom(anyRoomCells, 4))
-      || takeFrom(farFrom(allFloor, 3)) || takeFrom(allFloor);
-    if (!p) return;
-    const m = MONSTERS[mid];
-    foes.push({
-      mid, x: p.x, y: p.y, hp: m.hp, maxHp: m.hp, block: 0, buff: 0, stun: 0, psn: 0, psnT: 0,
-      awake: !(m.nap && chance(r, m.nap)), dead: false,
-    });
-  });
+  let candRooms = d.rooms.slice(1).filter(rm => Gr.dist(rm.x, rm.y, pxy.x, pxy.y) >= 12);
+  if (!candRooms.length) candRooms = d.rooms.slice(1);
+  if (!candRooms.length) candRooms = d.rooms;
+  candRooms.sort((a, b) => Gr.dist(b.x, b.y, pxy.x, pxy.y) - Gr.dist(a.x, a.y, pxy.x, pxy.y));
+  const ids = rollFoes(r, kind, row);
+  let clusterRoom = 0;
+  for (let i = 0; i < ids.length;) {
+    const take = kind === 'boss' && i === 0 ? 1 + ri(r, 1, 2) : ri(r, 1, 3);
+    const rm = candRooms[clusterRoom % candRooms.length];
+    clusterRoom += kind === 'boss' ? ri(r, 1, 2) : 1;
+    for (let n = 0; n < take && i < ids.length; n++, i++) {
+      const p = takeFrom(farFrom(nearRoom(rm, all), 8)) || takeFrom(farFrom(all, 10)) || takeFrom(farFrom(all, 4)) || takeFrom(all);
+      if (!p) break;
+      const m = MONSTERS[ids[i]];
+      foes.push({
+        mid: ids[i], x: p.x, y: p.y, hp: m.hp, maxHp: m.hp, block: 0, buff: 0, stun: 0, psn: 0, psnT: 0,
+        awake: !(m.nap && chance(r, m.nap)), dead: false,
+      });
+    }
+  }
 
-  // destructibles + furniture, from "bare hallway" to "cluttered vault"
-  const walls = d.wallIdx.map(i => ({ x: i % d.w, y: (i / d.w) | 0, hp: WALL_HP, mhp: WALL_HP }));
+  // clutter: obstacles / traps / chests / pickups, scaled to map size, heavy variance
+  const area = d.floors.size;
+  const inAnyRoom = (x, y) => d.rooms.some(rm => Gr.dist(x, y, rm.x, rm.y) <= rm.rad);
+  const hallCells = all.filter(([x, y]) => !inAnyRoom(x, y));
   const obs = [];
   const chests = [];
-  const blockedIdx = () => [
-    ...walls.map(q => q.y * d.w + q.x),
-    ...obs.map(q => q.y * d.w + q.x),
-    ...chests.map(q => q.y * d.w + q.x),
-  ];
-  const nObs = chance(r, 0.3) ? 0 : ri(r, 1, 6);
+  const staticBlocked = () => new Set([...obs, ...chests].map(o => o.y * d.w + o.x));
+  const keepsConnected = (x, y) => {
+    const blocked = staticBlocked();
+    blocked.add(y * d.w + x);
+    const startI = pxy.y * d.w + pxy.x;
+    if (blocked.has(startI)) return false;
+    return flood(d.w, d.h, d.floors, blocked, startI).size === d.floors.size - blocked.size;
+  };
+  const nObs = chance(r, 0.25) ? 0 : ri(r, 2, Math.min(15, 3 + Math.floor(area / 200)));
   for (let i = 0; i < nObs; i++) {
-    const p = takeFrom(farFrom(allFloor, 2));
+    const p = takeFrom(farFrom(all, 3));
     if (!p) break;
-    if (!connectedFloors(d.w, d.h, [...blockedIdx(), p.y * d.w + p.x])) continue;
+    if (!keepsConnected(p.x, p.y)) continue;
     const [e, hp] = pick(r, OBS_TYPES);
     obs.push({ x: p.x, y: p.y, hp, mhp: hp, e });
   }
   const traps = [];
-  const nt = chance(r, 0.25) ? (kind === 'boss' ? 2 : 0) : ri(r, 1, kind === 'boss' ? 5 : 4) + (kind === 'boss' ? 1 : 0);
+  const nt = chance(r, 0.2) ? (kind === 'boss' ? 3 : ri(r, 0, 1)) : ri(r, 2, Math.min(12, 3 + Math.floor(area / 250)));
   for (let i = 0; i < nt; i++) {
-    const p = takeFrom(farFrom(hallCells, 3)) || takeFrom(farFrom(allFloor, 3));
+    const p = takeFrom(farFrom(hallCells, 6)) || takeFrom(farFrom(all, 6));
     if (p) traps.push({ x: p.x, y: p.y, dmg: ri(r, 5, 7) + (row >= 6 ? 2 : 0), hp: 5, mhp: 5, sprung: false });
   }
-  const nChests = chance(r, 0.35) ? 0 : ri(r, 1, 3);
+  const nChests = chance(r, 0.3) ? 0 : ri(r, 1, 5);
   for (let i = 0; i < nChests; i++) {
-    const p = takeFrom(farFrom(allFloor.filter(([x, y]) => d.inRoom(x, y)), 2));
+    const p = takeFrom(farFrom(all, 4));
     if (!p) break;
-    if (!connectedFloors(d.w, d.h, [...blockedIdx(), p.y * d.w + p.x])) continue;
+    if (!keepsConnected(p.x, p.y)) continue;
     chests.push({ x: p.x, y: p.y, opened: false });
   }
   const items = [];
-  const nItems = ri(r, 0, 3);
-  for (let i = 0; i < nItems; i++) {
-    const p = takeFrom(farFrom(allFloor, 3));
+  for (let i = 0, n = ri(r, 0, 5); i < n; i++) {
+    const p = takeFrom(farFrom(all, 6));
     if (!p) break;
     if (chance(r, 0.5)) items.push({ x: p.x, y: p.y, t: 'gear', id: rollDropGear(r, row <= 3 ? 1 : row <= 6 ? 2 : 3), taken: false });
     else items.push({ x: p.x, y: p.y, t: 'gold', v: ri(r, 6, 12), taken: false });
@@ -208,11 +289,13 @@ export function startCombat(kind, row) {
 
   G.player.mp = G.player.maxMp;
   G.combat = {
-    kind, row, w: d.w, h: d.h, walls, obs, traps, chests, items, foes,
+    kind, row, w: d.w, h: d.h,
+    floors: [...d.floors], dug: [], wallDmg: {},
+    obs, traps, chests, items, foes,
     px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, defended: 0,
     cds: {}, mode: 'move', phase: 'prep', turn: 1, info: -1, sel: -1, potIdx: -1, ei: 0, eap: -1,
     drops: { gold: 0, scrap: 0, gear: [] },
-    lines: ['Scout the room, set your build, then begin.'],
+    lines: ['Scout the caverns, set your build, then begin.'],
     _due: 0,
   };
   goto('COMBAT');
@@ -223,7 +306,7 @@ export function beginBattle() {
   if (!c || c.phase !== 'prep') return;
   c.phase = 'player';
   c.sel = -1;
-  log(c.kind === 'boss' ? 'The dragon stirs…' : 'Battle begins!');
+  log(isEngaged() ? 'Battle begins!' : 'All quiet… explore freely.');
   save();
 }
 
@@ -311,8 +394,24 @@ function pickupAt(x, y) {
   }
 }
 
-// Opportunity attacks: leaving a square adjacent (incl. diagonals) to an awake
-// melee-capable enemy lets it strike once. Blink and forced movement don't provoke.
+// sleeping foes near the player's new position wake up (and the fight engages)
+function wakeScan() {
+  const c = C();
+  let woke = 0;
+  for (const f of c.foes) {
+    if (f.dead || f.awake) continue;
+    if (Gr.dist(f.x, f.y, c.px, c.py) > AGRO) continue;
+    f.awake = true;
+    woke++;
+    FX.push({ tx: f.x, ty: f.y, v: '❗', c: 'buff' });
+    log(`${MONSTERS[f.mid].name} notices you!`);
+  }
+  if (woke) c.ap = G.player.apMax; // the fight starts fresh
+  return woke;
+}
+
+// Opportunity attacks: leaving a hex adjacent to an awake melee-capable enemy
+// lets it strike once. Blink and forced movement don't provoke.
 function bestMelee(m) {
   let best = null;
   for (const mv of m.moves) if (mv.t === 'melee' && (!best || mv.dmg > best.dmg)) best = mv;
@@ -335,8 +434,8 @@ function provokeFoes(fromX, fromY, toX, toY) {
   const c = C();
   for (const f of c.foes) {
     if (f.dead || !f.awake || f.stun > 0) continue;
-    if (Gr.cheb(f.x, f.y, fromX, fromY) !== 1) continue;
-    if (Gr.cheb(f.x, f.y, toX, toY) <= 1) continue;
+    if (Gr.dist(f.x, f.y, fromX, fromY) !== 1) continue;
+    if (Gr.dist(f.x, f.y, toX, toY) <= 1) continue;
     const mv = bestMelee(MONSTERS[f.mid]);
     if (!mv) continue;
     foeOpportunity(f, mv);
@@ -358,10 +457,13 @@ export function closeInfo() { const c = C(); if (c) c.info = -1; }
 export function moveTo(x, y) {
   const c = C();
   if (!c || c.phase !== 'player') return;
-  const d = Gr.reach(c, c.px, c.py, c.ap).get(Gr.k(x, y));
+  const engaged = isEngaged();
+  const d = Gr.reach(c, c.px, c.py, engaged ? c.ap : EXPLORE_STEPS).get(Gr.k(x, y));
   if (!d) return;
-  if (provokeFoes(c.px, c.py, x, y)) { die(); return; }
-  c.ap -= d;
+  if (engaged) {
+    if (provokeFoes(c.px, c.py, x, y)) { die(); return; }
+    c.ap -= d;
+  }
   c.px = x;
   c.py = y;
   pickupAt(x, y);
@@ -370,6 +472,7 @@ export function moveTo(x, y) {
     springTrap(tr, null);
     if (G.player.hp <= 0) { die(); return; }
   }
+  wakeScan();
   save();
 }
 
@@ -378,21 +481,29 @@ export function attackFoe(i) {
   if (!c || c.phase !== 'player') return;
   const w = getPrimary();
   const f = c.foes[i];
-  if (!f || f.dead || c.ap < w.ap || Gr.cheb(c.px, c.py, f.x, f.y) > w.rng) return;
+  if (!f || f.dead || c.ap < w.ap || Gr.dist(c.px, c.py, f.x, f.y) > w.rng) return;
   c.ap -= w.ap;
   hitFoe(f, Math.max(1, w.dmg + ri(G.rng, -1, 1)), false);
   if (!checkWin()) save();
 }
 
-// A destructible thing (wall / obstacle / armed trap) at a tile, if any.
+// A destructible thing (rock wall / obstacle / armed trap) at a tile, if any.
+// Rock is only attackable where it borders walked floor.
+function wallEdgeAt(c, x, y) {
+  if (!Gr.inB(c, x, y)) return false;
+  const fs = Gr.floorSet(c);
+  if (fs.has(Gr.idx(c, x, y))) return false;
+  if (x === 0 || y === 0 || x === c.w - 1 || y === c.h - 1) return false; // border is unbreakable
+  return Gr.neighbors(x, y).some(([nx, ny]) => Gr.inB(c, nx, ny) && fs.has(Gr.idx(c, nx, ny)));
+}
+
 export function structAt(x, y) {
   const c = C();
-  const wl = Gr.wallAt(c, x, y);
-  if (wl) return { t: 'wall', o: wl };
   const ob = Gr.obsAt(c, x, y);
   if (ob) return { t: 'obs', o: ob };
   const tr = Gr.trapAt(c, x, y);
   if (tr) return { t: 'trap', o: tr };
+  if (wallEdgeAt(c, x, y)) return { t: 'wall', o: { x, y } };
   return null;
 }
 
@@ -401,15 +512,13 @@ export function structTargets() {
   const w = getPrimary();
   if (!c || c.phase !== 'player' || c.mode !== 'atk' || c.ap < w.ap) return [];
   const out = [];
-  const scan = (list, t) => {
-    for (const o of list) {
-      if (t === 'trap' && o.sprung) continue;
-      if (Gr.cheb(c.px, c.py, o.x, o.y) <= w.rng) out.push({ t, x: o.x, y: o.y });
+  for (const o of c.obs) if (Gr.dist(c.px, c.py, o.x, o.y) <= w.rng) out.push({ t: 'obs', x: o.x, y: o.y });
+  for (const o of c.traps) if (!o.sprung && Gr.dist(c.px, c.py, o.x, o.y) <= w.rng) out.push({ t: 'trap', x: o.x, y: o.y });
+  for (let y = c.py - w.rng; y <= c.py + w.rng; y++) {
+    for (let x = c.px - w.rng - 1; x <= c.px + w.rng + 1; x++) {
+      if (Gr.dist(c.px, c.py, x, y) <= w.rng && wallEdgeAt(c, x, y)) out.push({ t: 'wall', x, y });
     }
-  };
-  scan(c.walls, 'wall');
-  scan(c.obs, 'obs');
-  scan(c.traps, 'trap');
+  }
   return out;
 }
 
@@ -418,18 +527,29 @@ export function attackStructAt(x, y) {
   if (!c || c.phase !== 'player') return;
   const w = getPrimary();
   const s = structAt(x, y);
-  if (!s || (s.t === 'trap' && s.o.sprung)) return;
-  if (c.ap < w.ap || Gr.cheb(c.px, c.py, x, y) > w.rng) return;
+  if (!s || c.ap < w.ap || Gr.dist(c.px, c.py, x, y) > w.rng) return;
   c.ap -= w.ap;
   const dmg = Math.max(1, w.dmg + ri(G.rng, -1, 1));
+  if (s.t === 'wall') {
+    const i = Gr.idx(c, x, y);
+    const hp = (c.wallDmg[i] !== undefined ? c.wallDmg[i] : WALL_HP) - dmg;
+    FX.push({ tx: x, ty: y, v: `-${dmg}`, c: 'dmg' });
+    if (hp <= 0) {
+      delete c.wallDmg[i];
+      c.floors.push(i);
+      c.dug.push(i);
+      FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
+      log('You dig through the rock!');
+    } else {
+      c.wallDmg[i] = hp;
+    }
+    save();
+    return;
+  }
   s.o.hp -= dmg;
   FX.push({ tx: x, ty: y, v: `-${dmg}`, c: 'dmg' });
   if (s.o.hp > 0) { save(); return; }
-  if (s.t === 'wall') {
-    c.walls.splice(c.walls.indexOf(s.o), 1);
-    FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
-    log('You smash through the wall!');
-  } else if (s.t === 'obs') {
+  if (s.t === 'obs') {
     c.obs.splice(c.obs.indexOf(s.o), 1);
     FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
     log(`The ${s.o.e === '🪨' ? 'boulder' : s.o.e === '🪵' ? 'log pile' : 'urn'} breaks apart!`);
@@ -484,7 +604,7 @@ export function throwBomb(i) {
   const id = G.player.potions[c.potIdx];
   if (!f || f.dead || !id || POTIONS[id].fx !== 'bomb') { c.mode = 'move'; c.potIdx = -1; return; }
   const p = POTIONS[id];
-  if (Gr.cheb(c.px, c.py, f.x, f.y) > p.rng) return;
+  if (Gr.dist(c.px, c.py, f.x, f.y) > p.rng) return;
   G.player.potions.splice(c.potIdx, 1);
   c.ap -= 1;
   c.mode = 'move';
@@ -498,7 +618,7 @@ export function openChestAt(x, y) {
   const c = C();
   if (!c || c.phase !== 'player' || c.ap < 1) return;
   const ch = c.chests.find(q => q.x === x && q.y === y && !q.opened);
-  if (!ch || Gr.cheb(c.px, c.py, x, y) !== 1) return;
+  if (!ch || Gr.dist(c.px, c.py, x, y) !== 1) return;
   c.ap -= 1;
   ch.opened = true;
   const r = G.rng, x2 = rnd(r);
@@ -545,7 +665,7 @@ export function skillIssue(slot) {
   if (c.ap < sk.ap) return 'Need AP';
   if (G.player.mp < sk.mp) return 'Need MP';
   if ((sk.tgt === 'foe' || sk.tgt === 'burst') &&
-      !c.foes.some(f => !f.dead && Gr.cheb(c.px, c.py, f.x, f.y) <= sk.rng)) return 'No target';
+      !c.foes.some(f => !f.dead && Gr.dist(c.px, c.py, f.x, f.y) <= sk.rng)) return 'No target';
   if (sk.fx === 'heal' && G.player.hp >= G.player.maxHp) return 'Full HP';
   return null;
 }
@@ -558,13 +678,15 @@ export function skillTargets(slot) {
   if (sk.tgt === 'foe') {
     return c.foes.map((f, i) => i).filter(i => {
       const f = c.foes[i];
-      return !f.dead && Gr.cheb(c.px, c.py, f.x, f.y) <= sk.rng;
+      return !f.dead && Gr.dist(c.px, c.py, f.x, f.y) <= sk.rng;
     });
   }
   if (sk.tgt === 'tile') {
     const out = [];
-    for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
-      if (Gr.open(c, x, y) && Gr.cheb(c.px, c.py, x, y) <= sk.rng) out.push({ x, y });
+    for (let y = c.py - sk.rng; y <= c.py + sk.rng; y++) {
+      for (let x = c.px - sk.rng - 1; x <= c.px + sk.rng + 1; x++) {
+        if (Gr.dist(c.px, c.py, x, y) <= sk.rng && Gr.open(c, x, y)) out.push({ x, y });
+      }
     }
     return out;
   }
@@ -579,7 +701,7 @@ export function castSkill(slot, tx, ty) {
   const P = G.player, w = getPrimary();
   const fi = tx === undefined ? -1 : foeIdxAt(c, tx, ty);
   const f = fi >= 0 ? c.foes[fi] : null;
-  if (sk.tgt === 'foe' && (!f || Gr.cheb(c.px, c.py, tx, ty) > sk.rng)) return;
+  if (sk.tgt === 'foe' && (!f || Gr.dist(c.px, c.py, tx, ty) > sk.rng)) return;
 
   if (sk.fx === 'wx2') hitFoe(f, Math.max(1, w.dmg * 2 + ri(G.rng, -1, 1)), false);
   else if (sk.fx === 'dmg') hitFoe(f, sk.v, !!sk.pierce);
@@ -593,15 +715,20 @@ export function castSkill(slot, tx, ty) {
     c.pBlock += sk.v;
     FX.push({ tx: c.px, ty: c.py, v: `+${sk.v}🛡️`, c: 'blk' });
   } else if (sk.fx === 'blink') {
-    if (!Gr.open(c, tx, ty) || Gr.cheb(c.px, c.py, tx, ty) > sk.rng) return;
+    if (!Gr.open(c, tx, ty) || Gr.dist(c.px, c.py, tx, ty) > sk.rng) return;
     c.px = tx;
     c.py = ty;
     pickupAt(tx, ty);
+    wakeScan();
   } else if (sk.fx === 'shove') {
-    const dx = Math.sign(f.x - c.px), dy = Math.sign(f.y - c.py);
+    // push along the axial direction from player to target, two hexes
+    const [qp, rp] = Gr.toAxial(c.px, c.py);
+    const [qf, rf] = Gr.toAxial(f.x, f.y);
+    const dq = qf - qp, dr = rf - rp;
     let bonk = false;
     for (let s = 0; s < 2; s++) {
-      const nx = f.x + dx, ny = f.y + dy;
+      const [qq, rr2] = Gr.toAxial(f.x, f.y);
+      const [nx, ny] = Gr.axialToOffset(qq + dq, rr2 + dr);
       if (!Gr.open(c, nx, ny)) { bonk = true; break; }
       f.x = nx;
       f.y = ny;
@@ -611,7 +738,7 @@ export function castSkill(slot, tx, ty) {
     const tr = Gr.trapAt(c, f.x, f.y);
     if (tr && !f.dead) springTrap(tr, f);
   } else if (sk.fx === 'whirl' || sk.fx === 'nova') {
-    const hits = c.foes.filter(q => !q.dead && Gr.cheb(c.px, c.py, q.x, q.y) <= sk.rng);
+    const hits = c.foes.filter(q => !q.dead && Gr.dist(c.px, c.py, q.x, q.y) <= sk.rng);
     if (!hits.length) return;
     for (const q of hits) {
       hitFoe(q, sk.fx === 'whirl' ? Math.max(1, w.dmg + ri(G.rng, -1, 1)) : sk.v, false);
@@ -650,7 +777,7 @@ export function tapBoard(x, y) {
   if (c.mode === 'atk') {
     if (fi >= 0 && atkTargets().includes(fi)) { attackFoe(fi); return; }
     const s = structAt(x, y);
-    if (s && !(s.t === 'trap' && s.o.sprung) && Gr.cheb(c.px, c.py, x, y) <= getPrimary().rng) { attackStructAt(x, y); return; }
+    if (s && Gr.dist(c.px, c.py, x, y) <= getPrimary().rng) { attackStructAt(x, y); return; }
   } else if (c.mode === 'sk0' || c.mode === 'sk1') {
     const slot = c.mode === 'sk1' ? 1 : 0;
     const sk = skillFor(slot);
@@ -667,7 +794,7 @@ export function tapBoard(x, y) {
     }
     c.sel = -1;
     const ch = Gr.chestAt(c, x, y);
-    if (ch && !ch.opened && Gr.cheb(c.px, c.py, x, y) === 1) { openChestAt(x, y); return; }
+    if (ch && !ch.opened && Gr.dist(c.px, c.py, x, y) === 1) { openChestAt(x, y); return; }
     moveTo(x, y);
     return;
   }
@@ -684,7 +811,7 @@ export function atkTargets() {
   if (!c || c.phase !== 'player' || c.ap < w.ap) return [];
   return c.foes.map((f, i) => i).filter(i => {
     const f = c.foes[i];
-    return !f.dead && Gr.cheb(c.px, c.py, f.x, f.y) <= w.rng;
+    return !f.dead && Gr.dist(c.px, c.py, f.x, f.y) <= w.rng;
   });
 }
 
@@ -695,7 +822,7 @@ export function bombTargets() {
   if (!id) return [];
   return c.foes.map((f, i) => i).filter(i => {
     const f = c.foes[i];
-    return !f.dead && Gr.cheb(c.px, c.py, f.x, f.y) <= POTIONS[id].rng;
+    return !f.dead && Gr.dist(c.px, c.py, f.x, f.y) <= POTIONS[id].rng;
   });
 }
 
@@ -716,11 +843,11 @@ export function foeThreatens(i, budget, rmap) {
   for (const mv of m.moves) {
     if (mv.t !== 'melee' && mv.t !== 'rng') continue;
     const rng = mv.t === 'melee' ? 1 : mv.rng;
-    if (mv.ap <= budget && Gr.cheb(f.x, f.y, c.px, c.py) <= rng) return true;
+    if (mv.ap <= budget && Gr.dist(f.x, f.y, c.px, c.py) <= rng) return true;
     for (const [kk, d] of rmap) {
       if (d + mv.ap > budget) continue;
       const [x, y] = kk.split(',').map(Number);
-      if (Gr.cheb(x, y, c.px, c.py) <= rng) return true;
+      if (Gr.dist(x, y, c.px, c.py) <= rng) return true;
     }
   }
   return false;
@@ -729,7 +856,7 @@ export function foeThreatens(i, budget, rmap) {
 // ---------- enemy turn ----------
 export function endTurn() {
   const c = C();
-  if (!c || c.phase !== 'player') return;
+  if (!c || c.phase !== 'player' || !isEngaged()) return; // exploring has no turns
   c.mode = 'move';
   c.info = -1;
   c.sel = -1;
@@ -768,7 +895,7 @@ export function tick(t) {
   if (t >= c._due) {
     enemyMicro();
     const c2 = G.combat;
-    if (c2 && c2.phase === 'enemy') c2._due = t + 330;
+    if (c2 && c2.phase === 'enemy') c2._due = t + 320;
   }
 }
 
@@ -804,12 +931,12 @@ function enemyMicro() {
 
     if (c.eap < 0) { // activation: wake check, block fades, poison ticks, stun checks
       if (!f.awake) {
-        if (Gr.cheb(f.x, f.y, c.px, c.py) <= AGRO) {
+        if (Gr.dist(f.x, f.y, c.px, c.py) <= AGRO) {
           f.awake = true;
           FX.push({ tx: f.x, ty: f.y, v: '❗', c: 'buff' });
           log(`${m.name} notices you!`);
         } else {
-          c.ei++; // still napping in its room — skip without a beat
+          c.ei++; // still napping somewhere far — skip without a beat
           continue;
         }
       }
@@ -840,7 +967,7 @@ function enemyMicro() {
       return; // activation beat
     }
 
-    const dist = Gr.cheb(f.x, f.y, c.px, c.py);
+    const dist = Gr.dist(f.x, f.y, c.px, c.py);
     const rangedOnly = !m.moves.some(mv => mv.t === 'melee');
     const cheapShot = m.moves.filter(mv => mv.t === 'rng').reduce((a, b) => (a && a.ap <= b.ap ? a : b), null);
 
@@ -920,13 +1047,12 @@ function enemyMicro() {
   }
 }
 
-// A 4-dir step that takes the foe out of the player's melee reach, avoiding traps.
+// A one-hex step that takes the foe out of the player's melee reach, avoiding traps.
 function retreatStep(c, f) {
   let best = null, bd = 1;
-  for (const [dx, dy] of Gr.DIRS) {
-    const nx = f.x + dx, ny = f.y + dy;
+  for (const [nx, ny] of Gr.neighbors(f.x, f.y)) {
     if (!Gr.open(c, nx, ny) || Gr.trapAt(c, nx, ny)) continue;
-    const d = Gr.cheb(nx, ny, c.px, c.py);
+    const d = Gr.dist(nx, ny, c.px, c.py);
     if (d > bd) { bd = d; best = { x: nx, y: ny }; }
   }
   return best;
