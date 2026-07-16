@@ -1,4 +1,4 @@
-import { initCanvas, pointerDown, pointerMove, pointerUp, pointerCancel } from './ui.js';
+import { initCanvas, pointerDown, pointerMove, pointerUp, pointerCancel, wheel } from './ui.js';
 import { G, boot, save } from './game.js';
 import { tick } from './combat.js';
 import { render } from './screens.js';
@@ -9,8 +9,9 @@ boot();
 
 cnv.addEventListener('pointerdown', (e) => { e.preventDefault(); pointerDown(e); });
 window.addEventListener('pointermove', (e) => pointerMove(e));
-window.addEventListener('pointerup', () => pointerUp());
+window.addEventListener('pointerup', (e) => pointerUp(e));
 window.addEventListener('pointercancel', () => pointerCancel());
+cnv.addEventListener('wheel', (e) => { e.preventDefault(); wheel(e); }, { passive: false });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && G.player && !G.dead && !G.won) save();

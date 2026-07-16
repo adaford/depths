@@ -4,8 +4,10 @@ Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
 ❓ events, treasure, merchants), then delve VAST hexagonal caverns — every
 battle-map is a freshly generated labyrinth of halls, winding corridors, and
 caves, up to a hundred hexes across. Scout before you commit: scroll the whole
-map, tap enemies to see their walk range and full movesets (red flash = they
-can reach you), and swap gear and skills. While nothing is awake you explore
+map (pinch to zoom, drag to pan), tap enemies to see their walk range and
+full movesets (red flash = they can reach you), and swap gear and skills.
+Every enemy dozes on its own 0-4 turn timer — sneak while they sleep, and
+watch reinforcements wake mid-fight. While nothing threatens you, explore
 freely with long strides and a compass pointing to the nearest foe; the moment
 something stirs, the AP economy kicks in — move hex by hex (green shows your
 reach), strike any of the 6 directions, and mind opportunity attacks when you

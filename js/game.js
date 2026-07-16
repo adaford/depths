@@ -6,7 +6,7 @@ import { WEAPONS, OFFHANDS, ARMOR, POTIONS, SKILLS, RECIPES, getItem } from './d
 import { startCombat } from './combat.js';
 
 export const G = { screen: 'TITLE' };
-const KEY = 'depths_save_5';
+const KEY = 'depths_save_6';
 export const BAG_MAX = 12, POT_MAX = 3;
 const hasStore = () => typeof localStorage !== 'undefined';
 
@@ -25,7 +25,7 @@ export function loadSave() {
     const s = localStorage.getItem(KEY);
     if (!s) return false;
     const d = JSON.parse(s);
-    if (!d || d.v !== 5 || !d.player) return false;
+    if (!d || d.v !== 6 || !d.player) return false;
     resetG();
     Object.assign(G, d);
     if (G.combat) G.combat._due = 0; // performance.now() restarts every page load
@@ -37,7 +37,7 @@ export function goto(s) { G.screen = s; save(); }
 
 export function boot() {
   try {
-    if (hasStore()) for (const k of ['depths_save_1', 'depths_save_2', 'depths_save_3', 'depths_save_4']) localStorage.removeItem(k); // older schemas
+    if (hasStore()) for (const k of ['depths_save_1', 'depths_save_2', 'depths_save_3', 'depths_save_4', 'depths_save_5']) localStorage.removeItem(k); // older schemas
   } catch (e) {}
   if (loadSave() && G.player.hp > 0 && !G.dead && !G.won) {
     G.back = (G.screen !== 'TITLE') ? G.screen : (G.back || 'MAP');
@@ -59,7 +59,7 @@ export function continueRun() {
 export function newRun() {
   const seed = ((Date.now() % 2147483647) ^ Math.floor(Math.random() * 2147483647)) >>> 0;
   resetG();
-  G.v = 5;
+  G.v = 6;
   G.rng = makeRng(seed);
   G.map = genMap(G.rng);
   G.cur = -1;

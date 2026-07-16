@@ -19,8 +19,11 @@ import { ri, pick, chance, rnd } from './rng.js';
 import * as Gr from './grid.js';
 
 export const FX = [];
-export const AGRO = 6;          // hex distance at which a sleeping foe wakes
-export const EXPLORE_STEPS = 12; // free-move stride per tap while nothing is awake
+export const AGRO = 6;          // hex distance at which a sleeping foe wakes early
+export const EXPLORE_STEPS = 12; // free-move stride per tap while nothing threatens
+export const ENGAGE_R = 10;      // an awake foe this close pulls you into combat
+export const CHASE_R = 20;       // once alarmed, pursuers this close keep you in it
+export const FAR = 12;           // awake foes beyond this march silently (no beats)
 export const WALL_HP = 12;
 const OBS_TYPES = [['🪨', 10], ['🪵', 6], ['⚱️', 4]];
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -32,10 +35,21 @@ function log(s) {
   if (c.lines.length > 2) c.lines.shift();
 }
 
-// The fight is "engaged" while any foe is awake; otherwise you're exploring.
+// Engaged while an awake foe is near. Alarm hysteresis: once a fight starts you
+// stay in it while pursuers remain within CHASE_R — no free-move kiting.
 export function isEngaged() {
   const c = C();
-  return !!c && c.foes.some(f => !f.dead && f.awake);
+  if (!c) return false;
+  let near = false, chase = false;
+  for (const f of c.foes) {
+    if (f.dead || !f.awake) continue;
+    const d = Gr.dist(f.x, f.y, c.px, c.py);
+    if (d <= ENGAGE_R) near = true;
+    if (d <= CHASE_R) chase = true;
+  }
+  if (near) c.alarm = 1;
+  else if (!chase) c.alarm = 0;
+  return near || (!!c.alarm && chase);
 }
 
 export function nearestFoe() {
@@ -237,9 +251,10 @@ export function startCombat(kind, row) {
       const p = takeFrom(farFrom(nearRoom(rm, all), 8)) || takeFrom(farFrom(all, 10)) || takeFrom(farFrom(all, 4)) || takeFrom(all);
       if (!p) break;
       const m = MONSTERS[ids[i]];
+      const napT = ri(r, 0, 4); // every foe dozes 0-4 turns (0 = alert from the start)
       foes.push({
         mid: ids[i], x: p.x, y: p.y, hp: m.hp, maxHp: m.hp, block: 0, buff: 0, stun: 0, psn: 0, psnT: 0,
-        awake: !(m.nap && chance(r, m.nap)), dead: false,
+        napT, awake: napT === 0, dead: false,
       });
     }
   }
@@ -292,7 +307,7 @@ export function startCombat(kind, row) {
     kind, row, w: d.w, h: d.h,
     floors: [...d.floors], dug: [], wallDmg: {},
     obs, traps, chests, items, foes,
-    px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, defended: 0,
+    px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, defended: 0, alarm: 0,
     cds: {}, mode: 'move', phase: 'prep', turn: 1, info: -1, sel: -1, potIdx: -1, ei: 0, eap: -1,
     drops: { gold: 0, scrap: 0, gear: [] },
     lines: ['Scout the caverns, set your build, then begin.'],
@@ -350,6 +365,7 @@ function checkWin() {
 function hitFoe(f, raw, pierce) {
   const m = MONSTERS[f.mid];
   f.awake = true;
+  f.napT = 0;
   let dmg = raw;
   if (!pierce) {
     const b = Math.min(f.block, dmg);
@@ -367,6 +383,7 @@ function springTrap(tr, foe) {
   if (foe) {
     foe.hp -= tr.dmg;
     foe.awake = true;
+    foe.napT = 0;
     FX.push({ tx: tr.x, ty: tr.y, v: `-${tr.dmg}`, c: 'dmg' });
     log(`${MONSTERS[foe.mid].name} triggers a trap!`);
     if (foe.hp <= 0) killFoe(foe);
@@ -397,16 +414,18 @@ function pickupAt(x, y) {
 // sleeping foes near the player's new position wake up (and the fight engages)
 function wakeScan() {
   const c = C();
+  const wasEngaged = isEngaged();
   let woke = 0;
   for (const f of c.foes) {
     if (f.dead || f.awake) continue;
     if (Gr.dist(f.x, f.y, c.px, c.py) > AGRO) continue;
     f.awake = true;
+    f.napT = 0;
     woke++;
     FX.push({ tx: f.x, ty: f.y, v: '❗', c: 'buff' });
     log(`${MONSTERS[f.mid].name} notices you!`);
   }
-  if (woke) c.ap = G.player.apMax; // the fight starts fresh
+  if (woke && !wasEngaged) c.ap = G.player.apMax; // the fight starts fresh
   return woke;
 }
 
@@ -929,14 +948,23 @@ function enemyMicro() {
     if (c.ei >= c.foes.length) { startPlayerTurn(); return; }
     const f = c.foes[c.ei], m = MONSTERS[f.mid];
 
-    if (c.eap < 0) { // activation: wake check, block fades, poison ticks, stun checks
+    if (c.eap < 0) { // activation: wake checks, block fades, poison ticks, stun checks
       if (!f.awake) {
         if (Gr.dist(f.x, f.y, c.px, c.py) <= AGRO) {
           f.awake = true;
+          f.napT = 0;
           FX.push({ tx: f.x, ty: f.y, v: '❗', c: 'buff' });
           log(`${m.name} notices you!`);
+          // falls through and acts this turn — you got too close
+        } else if (--f.napT <= 0) {
+          f.napT = 0;
+          f.awake = true; // slept off its timer; joins in from next turn
+          FX.push({ tx: f.x, ty: f.y, v: '❗', c: 'buff' });
+          c.ei++;
+          c.eap = -1;
+          continue;
         } else {
-          c.ei++; // still napping somewhere far — skip without a beat
+          c.ei++; // still dozing — skip without a beat
           continue;
         }
       }
@@ -961,6 +989,25 @@ function enemyMicro() {
         c.eap = -1;
         save();
         return; // frozen beat is worth showing
+      }
+      // far from the action: march the whole turn silently, no beats, no camera
+      if (Gr.dist(f.x, f.y, c.px, c.py) > FAR) {
+        for (let s = 0; s < m.ap; s++) {
+          const step = Gr.stepToward(c, f, c.px, c.py);
+          if (!step) break;
+          f.x = step.x;
+          f.y = step.y;
+          const tr = Gr.trapAt(c, f.x, f.y);
+          if (tr) {
+            springTrap(tr, f);
+            if (checkWin()) return;
+            if (f.dead) break;
+          }
+          if (Gr.dist(f.x, f.y, c.px, c.py) <= FAR) break; // reached the fight — loud from next turn
+        }
+        c.ei++;
+        c.eap = -1;
+        continue;
       }
       c.eap = m.ap;
       save();

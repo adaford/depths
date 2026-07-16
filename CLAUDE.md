@@ -18,7 +18,7 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
 - Immediate-mode UI: every frame redraws and re-registers tap regions via
   `U.button`/`U.hit`. No DOM elements, no event listeners per widget.
 - `G` in `js/game.js` is the whole game state and must stay JSON-serializable —
-  it is persisted verbatim to localStorage (`depths_save_5`). No class instances,
+  it is persisted verbatim to localStorage (`depths_save_6`). No class instances,
   functions, or absolute timestamps inside `G` (relative `_due` is reset on load).
   If you change the save schema incompatibly, bump the key and the `v` field.
 - All content (monsters + movesets, gear, potions, skills, craft recipes, node
@@ -31,12 +31,16 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
   conversion, BFS) goes through `js/grid.js`; never hand-roll dx/dy math. The
   board is solid rock with carved floors: `c.floors` is the walkable list,
   `c.wallDmg` tracks chipped rock, digging pushes into `floors` + `dug`.
-  Fights open in a `prep` scout phase (look around, inspect foes, swap build);
-  while no foe is awake you EXPLORE (moves free, `EXPLORE_STEPS` stride, foe
-  compass) and the AP economy starts when someone wakes. Leaving melee reach
-  provokes opportunity attacks both ways; rock/obstacles/traps have hp and are
-  attackable (map border is not); foes roll asleep per-monster (`nap`) and wake
-  within AGRO range or when hurt. Enemy turns advance one micro-action per
+  The camera pans by drag and zooms by pinch or mouse wheel (`U.dragZone`
+  pinch handler). Fights open in a `prep` scout phase (look around, inspect
+  foes, swap build); while no awake foe is within `ENGAGE_R` you EXPLORE
+  (moves free, `EXPLORE_STEPS` stride, foe compass) and the AP economy starts
+  on engagement (with `CHASE_R` pursuit hysteresis — no free-move kiting).
+  Every foe rolls a 0-4 turn sleep timer at battle start; timers tick down
+  during enemy phases, and proximity (AGRO) or damage wakes instantly. Awake
+  foes beyond `FAR` march silently without beats. Leaving melee reach provokes
+  opportunity attacks both ways; rock/obstacles/traps have hp and are
+  attackable (map border is not). Enemy turns advance one micro-action per
   `tick()` beat. Dungeons must stay fully connected — obstacles and chests
   block movement, so any new blocker must pass the placement connectivity
   check in `startCombat`.
