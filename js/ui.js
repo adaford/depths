@@ -153,15 +153,15 @@ export function bar(x, y, w, h, frac, fg, label) {
   panel(x, y, w, h, h / 2, '#262633');
   const f = Math.max(0, Math.min(1, frac));
   if (f > 0) panel(x, y, Math.max(h, w * f), h, h / 2, fg);
-  if (label) txt(label, x + w / 2, y + h / 2 + 1, Math.max(11, Math.round(h * 0.62)), '#fff', 'center', true);
+  if (label) txt(label, x + w / 2, y + h / 2 + 1, Math.max(12, Math.round(h * 0.62)), '#fff', 'center', true);
 }
 
 export function button(x, y, w, h, label, fn, o = {}) {
   const dis = !!o.disabled;
   if (dis) ctx.globalAlpha = 0.4;
   panel(x, y, w, h, 14, o.fill || '#232338', o.stroke || '#3f3f5c');
-  txt(label, x + w / 2, y + h / 2 - (o.sub ? 10 : 0), o.size || 20, o.color || '#e8e4da', 'center', true);
-  if (o.sub) txt(o.sub, x + w / 2, y + h / 2 + 15, 12, '#8a8798');
+  txt(label, x + w / 2, y + h / 2 - (o.sub ? 11 : 0), o.size || 20, o.color || '#e8e4da', 'center', true);
+  if (o.sub) txt(o.sub, x + w / 2, y + h / 2 + 16, 14, '#aca9bc');
   if (dis) ctx.globalAlpha = 1;
   else hit(x, y, w, h, fn);
 }
