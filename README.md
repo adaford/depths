@@ -8,8 +8,10 @@ mouths, and cover that blocks LINE OF SIGHT. Every enemy has its own sight
 range (a slime barely sees 3 tiles; the dragon sees 30) and a facing — sneak
 around cover, strike from behind for CRIT damage (daggers hit 3x), or Vanish
 and walk right past. Scout before you commit: scroll and pinch-zoom the map,
-tap enemies to see exactly what they can see and where they can walk (red
-flash = they can reach you), and swap gear and skills. Foes doze on 0-4 turn
+then tap ANYTHING to inspect it — enemies show where they can walk, what they
+can see, and their full moveset (red flash = they can reach you); traps,
+chests, cover, loot, even the rock itself explain themselves, with the action
+right on the panel. Swap gear and skills freely. Foes doze on 0-4 turn
 timers and wake in waves; ranged attacks — yours and theirs — need clear
 sight lines. Explore freely with a foe compass until something spots you,
 then it's AP tactics: move, strike (diagonals count), Shove foes into spikes,

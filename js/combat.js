@@ -19,7 +19,7 @@ import {
   G, save, goto, clearSave, afterCombatVictory, getPrimary, getSecondary, getArmor,
   addGearToBag, POT_MAX,
 } from './game.js';
-import { MONSTERS, SKILLS, POTIONS, WEAPONS, OFFHANDS, ARMOR, DROPS, getItem } from './data.js';
+import { MONSTERS, SKILLS, POTIONS, WEAPONS, OFFHANDS, ARMOR, DROPS, OBSTACLES, getItem } from './data.js';
 import { ri, pick, chance, rnd } from './rng.js';
 import * as Gr from './grid.js';
 
@@ -29,7 +29,6 @@ export const ENGAGE_R = 10;      // an awake foe this close pulls you into comba
 export const CHASE_R = 20;       // once alarmed, pursuers this close keep you in it
 export const FAR = 12;           // awake foes beyond this march silently (no beats)
 export const WALL_HP = 12;
-const OBS_TYPES = [['🪨', 10], ['🪵', 6], ['⚱️', 4]];
 const FACES = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 const C = () => G.combat;
@@ -294,8 +293,8 @@ export function startCombat(kind, row) {
     const p = (chance(r, 0.7) ? takeFrom(farFrom(roomFloor, 2)) : null) || takeFrom(farFrom(all, 2));
     if (!p) break;
     if (!keepsConnected(p.x, p.y)) continue;
-    const [e, hp] = pick(r, OBS_TYPES);
-    obs.push({ x: p.x, y: p.y, hp, mhp: hp, e });
+    const ot = pick(r, OBSTACLES);
+    obs.push({ x: p.x, y: p.y, hp: ot.hp, mhp: ot.hp, e: ot.e });
   }
   const traps = [];
   const addTrap = (p) => {
@@ -331,7 +330,7 @@ export function startCombat(kind, row) {
     floors: [...d.floors], dug: [], wallDmg: {},
     obs, traps, chests, items, foes,
     px: pxy.x, py: pxy.y, ap: G.player.apMax, pBlock: 0, pPsn: 0, pPsnT: 0, pInvis: 0, defended: 0, alarm: 0,
-    cds: {}, mode: 'move', phase: 'prep', turn: 1, info: -1, sel: -1, potIdx: -1, ei: 0, eap: -1,
+    cds: {}, mode: 'move', phase: 'prep', turn: 1, sel: -1, insp: null, potIdx: -1, ei: 0, eap: -1,
     drops: { gold: 0, scrap: 0, gear: [] },
     lines: ['Scout the halls, set your build, then begin.'],
     _due: 0,
@@ -344,6 +343,7 @@ export function beginBattle() {
   if (!c || c.phase !== 'prep') return;
   c.phase = 'player';
   c.sel = -1;
+  c.insp = null;
   wakeScan();
   log(isEngaged() ? 'Battle begins!' : 'All quiet… explore freely.');
   save();
@@ -525,7 +525,10 @@ export function setMode(m) {
   if (c.mode !== 'bomb') c.potIdx = -1;
 }
 
-export function closeInfo() { const c = C(); if (c) c.info = -1; }
+export function clearInspect() {
+  const c = C();
+  if (c) { c.sel = -1; c.insp = null; }
+}
 
 export function moveTo(x, y) {
   const c = C();
@@ -628,7 +631,8 @@ export function attackStructAt(x, y) {
   if (s.t === 'obs') {
     c.obs.splice(c.obs.indexOf(s.o), 1);
     FX.push({ tx: x, ty: y, v: '💥', c: 'buff' });
-    log(`The ${s.o.e === '🪨' ? 'boulder' : s.o.e === '🪵' ? 'log pile' : 'urn'} breaks apart!`);
+    const ot = OBSTACLES.find(q => q.e === s.o.e);
+    log(`The ${ot ? ot.name.toLowerCase() : 'obstacle'} breaks apart!`);
     if (s.o.e === '⚱️' && chance(G.rng, 0.5)) {
       const v = ri(G.rng, 3, 7);
       G.player.gold += v;
@@ -902,19 +906,46 @@ export function castSkill(slot, tx, ty) {
 }
 
 // ---------- board taps (immediate-mode UI routes here) ----------
+// Anything on the map can be tapped to inspect it: foes (walk range + sight +
+// description panel), obstacles, traps, chests, ground items, even diggable rock.
+// Tapping the same thing again — or open floor — dismisses. Panel buttons carry
+// the actions (open / smash / grab), so plain taps never trigger them by surprise.
+function inspTargetAt(c, x, y) {
+  if (Gr.obsAt(c, x, y)) return { t: 'obs', x, y };
+  if (Gr.trapAt(c, x, y)) return { t: 'trap', x, y };
+  if (Gr.chestAt(c, x, y)) return { t: 'chest', x, y };
+  if (c.items.some(i => !i.taken && i.x === x && i.y === y)) return { t: 'item', x, y };
+  if (wallEdgeAt(c, x, y)) return { t: 'wall', x, y };
+  return null;
+}
+
+// Select/inspect whatever sits at (x,y); returns false if the tile is plain floor.
+function inspectAt(c, x, y) {
+  const fi = foeIdxAt(c, x, y);
+  if (fi >= 0) {
+    c.sel = c.sel === fi ? -1 : fi;
+    c.insp = null;
+    return true;
+  }
+  const q = inspTargetAt(c, x, y);
+  if (q) {
+    const same = c.insp && c.insp.t === q.t && c.insp.x === x && c.insp.y === y;
+    c.insp = same ? null : q;
+    c.sel = -1;
+    return true;
+  }
+  return false;
+}
+
 export function tapBoard(x, y) {
   const c = C();
   if (!c) return;
-  if (c.info >= 0) { c.info = -1; return; }
-  const fi = foeIdxAt(c, x, y);
   if (c.phase === 'prep') { // scouting: taps only select/inspect
-    if (fi >= 0) {
-      if (c.sel === fi) { c.info = fi; c.sel = -1; }
-      else c.sel = fi;
-    } else c.sel = -1;
+    if (!inspectAt(c, x, y)) clearInspect();
     return;
   }
   if (c.phase !== 'player') return;
+  const fi = foeIdxAt(c, x, y);
   if (c.mode === 'atk') {
     if (fi >= 0 && atkTargets().includes(fi)) { attackFoe(fi); return; }
     const s = structAt(x, y);
@@ -927,22 +958,16 @@ export function tapBoard(x, y) {
   } else if (c.mode === 'bomb') {
     if (fi >= 0) { throwBomb(fi); return; }
   } else {
-    // move mode: tap a foe once to preview its range + sight, again for details
-    if (fi >= 0) {
-      if (c.sel === fi) { c.info = fi; c.sel = -1; }
-      else c.sel = fi;
-      return;
-    }
-    c.sel = -1;
-    const ch = Gr.chestAt(c, x, y);
-    if (ch && !ch.opened && Gr.dist(c.px, c.py, x, y) === 1) { openChestAt(x, y); return; }
+    // move mode: tap things to inspect them, tap open floor to walk
+    if (inspectAt(c, x, y)) return;
+    clearInspect();
     moveTo(x, y);
     return;
   }
-  // invalid tap while targeting: inspect foes, otherwise cancel back to move
-  if (fi >= 0) { c.sel = fi; c.mode = 'move'; return; }
+  // invalid tap while targeting: cancel back to move and inspect what was tapped
   c.mode = 'move';
   c.potIdx = -1;
+  inspectAt(c, x, y);
 }
 
 // Foe indexes attackable with the current weapon right now (ranged needs LoS).
@@ -1033,8 +1058,8 @@ export function endTurn() {
   const c = C();
   if (!c || c.phase !== 'player' || !isEngaged()) return; // exploring has no turns
   c.mode = 'move';
-  c.info = -1;
   c.sel = -1;
+  c.insp = null;
   c.potIdx = -1;
   c.phase = 'enemy';
   c.ei = 0;

@@ -141,12 +141,71 @@ export function panel(x, y, w, h, r, fill, stroke) {
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
 }
 
-export function txt(s, x, y, size = 16, color = '#e8e4da', align = 'center', bold = false) {
+const FONT = (size, bold) => `${bold ? '700 ' : ''}${size}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
+
+// maxW > 0 keeps the string inside that width: shrink a little, then ellipsize.
+export function txt(s, x, y, size = 16, color = '#e8e4da', align = 'center', bold = false, maxW = 0) {
+  s = String(s);
+  ctx.font = FONT(size, bold);
+  if (maxW > 0 && ctx.measureText(s).width > maxW) {
+    const z = Math.max(10, Math.floor(size * maxW / ctx.measureText(s).width));
+    ctx.font = FONT(z, bold);
+    if (ctx.measureText(s).width > maxW) {
+      const chars = [...s]; // code points — never split an emoji
+      while (chars.length > 1 && ctx.measureText(chars.join('') + '…').width > maxW) chars.pop();
+      s = chars.join('') + '…';
+    }
+  }
   ctx.fillStyle = color;
-  ctx.font = `${bold ? '700 ' : ''}${size}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
   ctx.textAlign = align;
   ctx.textBaseline = 'middle';
   ctx.fillText(s, x, y);
+}
+
+// Word-wrap into at most maxLines lines of at most maxW px (last line ellipsized
+// if the text is longer). Returns the number of lines drawn.
+export function wrap(s, x, y, maxW, size, lh, color = '#e8e4da', align = 'left', maxLines = 2, bold = false) {
+  ctx.font = FONT(size, bold);
+  const lines = [];
+  let cur = '', cut = false;
+  for (const wd of String(s).split(' ')) {
+    const test = cur ? cur + ' ' + wd : wd;
+    if (!cur || ctx.measureText(test).width <= maxW) { cur = test; continue; }
+    if (lines.length === maxLines - 1) { cut = true; break; }
+    lines.push(cur);
+    cur = wd;
+  }
+  if (cur) lines.push(cut ? cur + '…' : cur);
+  lines.forEach((ln, i) => txt(ln, x, y + i * lh, size, color, align, bold, maxW));
+  return lines.length;
+}
+
+// Draw a glyph (usually an emoji) truly centered on (x,y). The 'middle' baseline
+// sits emoji visibly off-center, so we center the measured ink bounds instead.
+// Metrics are cached per (size, string).
+const emoCache = new Map();
+export function emo(s, x, y, size, color = '#e8e4da') {
+  const sz = Math.max(8, Math.round(size));
+  ctx.font = FONT(sz, false);
+  ctx.textAlign = 'center';
+  const key = sz + '|' + s;
+  let m = emoCache.get(key);
+  if (m === undefined) {
+    const t = ctx.measureText(s);
+    m = t.actualBoundingBoxAscent !== undefined
+      ? { dx: (t.actualBoundingBoxLeft - t.actualBoundingBoxRight) / 2, dy: (t.actualBoundingBoxAscent - t.actualBoundingBoxDescent) / 2 }
+      : null;
+    if (emoCache.size > 500) emoCache.clear();
+    emoCache.set(key, m);
+  }
+  ctx.fillStyle = color;
+  if (m) {
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(s, x + m.dx, y + m.dy);
+  } else {
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s, x, y);
+  }
 }
 
 export function bar(x, y, w, h, frac, fg, label) {
@@ -160,8 +219,10 @@ export function button(x, y, w, h, label, fn, o = {}) {
   const dis = !!o.disabled;
   if (dis) ctx.globalAlpha = 0.4;
   panel(x, y, w, h, 14, o.fill || '#232338', o.stroke || '#3f3f5c');
-  txt(label, x + w / 2, y + h / 2 - (o.sub ? 11 : 0), o.size || 20, o.color || '#e8e4da', 'center', true);
-  if (o.sub) txt(o.sub, x + w / 2, y + h / 2 + 16, 14, '#aca9bc');
+  const ly = y + h / 2 - (o.sub ? 11 : 0);
+  if (o.emo) emo(label, x + w / 2, ly, o.size || 20, o.color || '#e8e4da'); // emoji-only labels center by ink bounds
+  else txt(label, x + w / 2, ly, o.size || 20, o.color || '#e8e4da', 'center', true, o.maxW || w - 12);
+  if (o.sub) txt(o.sub, x + w / 2, y + h / 2 + 16, 14, '#aca9bc', 'center', false, w - 10);
   if (dis) ctx.globalAlpha = 1;
   else hit(x, y, w, h, fn);
 }

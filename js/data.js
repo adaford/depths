@@ -63,7 +63,8 @@ export const SKILLS = {
   sk_stalk: { id: 'sk_stalk', cat: 'k', name: 'Shadowstep',   emoji: '🥷', ap: 1, mp: 3, cd: 3, tgt: 'foe',  rng: 4, fx: 'stalk', noLos: 1, desc: 'Slip directly behind a foe — backstab from there' },
 };
 
-// Monster movesets are shown to the player via the inspect (❓) overlay.
+// Monster stats + movesets are shown to the player in the tap-to-inspect panel.
+// desc: one short line of flavor/tactics (keep it under ~45 chars — phone width).
 // move types: melee (adjacent), rng (ranged attack), guard (+block), rage (+atk once per fight).
 // sight: how far it sees (tiles, needs line of sight) — spotting you wakes it and
 // alerts it; rock and obstacles block sight, so cover is real.
@@ -71,36 +72,59 @@ export const SKILLS = {
 // psn: [dmg, turns] poisons the player when the hit lands.
 export const MONSTERS = {
   m_rat:    { id: 'm_rat',    name: 'Giant Rat',      emoji: '🐀', hp: 13, ap: 3, def: 0, sight: 5, pool: 'easy',
+    desc: 'Fast, dumb, and always hungry.',
     moves: [{ t: 'melee', name: 'Bite', emoji: '🦷', dmg: 5, ap: 2 }] },
   m_bat:    { id: 'm_bat',    name: 'Cave Bat',       emoji: '🦇', hp: 10, ap: 4, def: 0, sight: 8, pool: 'easy',
+    desc: 'Frail, but too quick to outrun.',
     moves: [{ t: 'melee', name: 'Swoop', emoji: '🌬️', dmg: 4, ap: 2 }] },
   m_slime:  { id: 'm_slime',  name: 'Slime',          emoji: '🦠', hp: 18, ap: 2, def: 1, sight: 3, pool: 'easy',
+    desc: 'Slow and nearly blind — easy to sneak past.',
     moves: [{ t: 'melee', name: 'Engulf', emoji: '💧', dmg: 6, ap: 2 }] },
   m_gob:    { id: 'm_gob',    name: 'Goblin',         emoji: '👺', hp: 15, ap: 3, def: 0, sight: 10, pool: 'easy',
+    desc: 'Sharp-eyed sneak. Ducks behind its buckler.',
     moves: [{ t: 'melee', name: 'Shiv', emoji: '🗡️', dmg: 5, ap: 2 }, { t: 'guard', name: 'Hide', emoji: '🛡️', block: 4, ap: 1 }] },
   m_spider: { id: 'm_spider', name: 'Cave Spider',    emoji: '🕷️', hp: 11, ap: 3, def: 0, sight: 7, pool: 'easy',
+    desc: 'Weak bite, but the venom lingers.',
     moves: [{ t: 'melee', name: 'Venom Bite', emoji: '☠️', dmg: 3, ap: 2, psn: [2, 2] }] },
   m_skel:   { id: 'm_skel',   name: 'Skeleton',       emoji: '💀', hp: 22, ap: 3, def: 1, sight: 10, pool: 'med',
+    desc: 'An old soldier — blocks, then cuts back.',
     moves: [{ t: 'melee', name: 'Slash', emoji: '⚔️', dmg: 7, ap: 2 }, { t: 'guard', name: 'Bone Wall', emoji: '🦴', block: 6, ap: 1 }] },
   m_zomb:   { id: 'm_zomb',   name: 'Zombie',         emoji: '🧟', hp: 30, ap: 2, def: 0, sight: 4, pool: 'med',
+    desc: 'Barely sees. Hits like a cart when it does.',
     moves: [{ t: 'melee', name: 'Rend', emoji: '🩸', dmg: 8, ap: 2 }] },
   m_cult:   { id: 'm_cult',   name: 'Cultist',        emoji: '🧙', hp: 18, ap: 3, def: 0, sight: 14, pool: 'med',
+    desc: 'Sees far and hexes from range. Kill it first.',
     moves: [{ t: 'rng', name: 'Hex Bolt', emoji: '🔮', dmg: 6, rng: 4, ap: 2 }, { t: 'rage', name: 'Dark Chant', emoji: '💢', atk: 2, ap: 2 }] },
   m_viper:  { id: 'm_viper',  name: 'Pit Viper',      emoji: '🐍', hp: 16, ap: 4, def: 0, sight: 6, pool: 'med',
+    desc: 'Quick and venomous — hard to escape.',
     moves: [{ t: 'melee', name: 'Fang', emoji: '☠️', dmg: 4, ap: 2, psn: [2, 2] }] },
   m_orc:    { id: 'm_orc',    name: 'Orc Brute',      emoji: '👹', hp: 26, ap: 3, def: 1, sight: 9, pool: 'med',
+    desc: 'A wall of muscle behind a cleaver.',
     moves: [{ t: 'melee', name: 'Cleave', emoji: '🪓', dmg: 9, ap: 2 }] },
   m_ogre:   { id: 'm_ogre',   name: 'Ogre',           emoji: '🧌', hp: 38, ap: 3, def: 1, sight: 8, pool: 'elite',
+    desc: 'An angry mountain. Gets madder as it fights.',
     moves: [{ t: 'melee', name: 'Smash', emoji: '💥', dmg: 11, ap: 2 }, { t: 'rage', name: 'Fury', emoji: '💢', atk: 2, ap: 1 }] },
   m_wraith: { id: 'm_wraith', name: 'Wraith',         emoji: '👻', hp: 30, ap: 4, def: 0, sight: 18, pool: 'elite',
+    desc: 'Sees through the dark. Rips souls from afar.',
     moves: [{ t: 'rng', name: 'Soul Rip', emoji: '🌫️', dmg: 7, rng: 3, ap: 2 }] },
   m_golem:  { id: 'm_golem',  name: 'Stone Golem',    emoji: '🗿', hp: 44, ap: 2, def: 2, sight: 5, pool: 'elite',
+    desc: 'Living rock — slow, armored, relentless.',
     moves: [{ t: 'melee', name: 'Slam', emoji: '🪨', dmg: 10, ap: 2 }, { t: 'guard', name: 'Harden', emoji: '🛡️', block: 8, ap: 1 }] },
   m_whelp:  { id: 'm_whelp',  name: 'Dragon Whelp',   emoji: '🐲', hp: 13, ap: 3, def: 0, sight: 10, pool: 'minion',
+    desc: 'A dragon in miniature — bites the ankles.',
     moves: [{ t: 'melee', name: 'Nip', emoji: '🦷', dmg: 5, ap: 2 }] },
   m_dragon: { id: 'm_dragon', name: 'Ancient Dragon', emoji: '🐉', hp: 86, ap: 4, def: 2, sight: 30, pool: 'boss',
+    desc: 'The Depths made flesh. It sees everything.',
     moves: [{ t: 'melee', name: 'Tail Swipe', emoji: '🌪️', dmg: 11, ap: 2 }, { t: 'rng', name: 'Fire Breath', emoji: '🔥', dmg: 8, rng: 3, ap: 2 }, { t: 'rage', name: 'Enrage', emoji: '💢', atk: 2, ap: 2 }] },
 };
+
+// Destructible cover placed by the dungeon generator. Blocks movement AND line
+// of sight (shots and enemy eyes) until smashed. Shown in the inspect panel.
+export const OBSTACLES = [
+  { e: '🪨', hp: 10, name: 'Boulder',  desc: 'Heavy cover — blocks paths, shots, and enemy eyes until smashed.' },
+  { e: '🪵', hp: 6,  name: 'Log Pile', desc: 'Stacked timber — blocks the way and hides you from view.' },
+  { e: '⚱️', hp: 4,  name: 'Old Urn',  desc: 'Blocks the way. Might hold coins — smash it and see.' },
+];
 
 // What each pool drops on death. Every foe drops one piece of gear (tier ~ pool tier).
 export const DROPS = {
