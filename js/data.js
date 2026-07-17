@@ -1,9 +1,10 @@
 // All game content lives here. Tune numbers, add monsters/gear/skills/recipes freely —
 // the rest of the code is data-driven off these tables.
 
-// Primary weapons drive the ATTACK action: dmg per hit, rng in tiles (manhattan), ap cost per swing.
+// Primary weapons drive the ATTACK action: dmg per hit, rng in tiles (chebyshev), ap cost per swing.
+// crit = backstab multiplier (default 2x when striking from behind); daggers excel at it.
 export const WEAPONS = {
-  w_dagger: { id: 'w_dagger', cat: 'w', name: 'Dagger',      emoji: '🗡️', dmg: 2,  ap: 1, rng: 1, tier: 1, price: 18 },
+  w_dagger: { id: 'w_dagger', cat: 'w', name: 'Dagger',      emoji: '🗡️', dmg: 2,  ap: 1, rng: 1, crit: 3, tier: 1, price: 18 },
   w_club:   { id: 'w_club',   cat: 'w', name: 'Club',        emoji: '🏏', dmg: 4,  ap: 2, rng: 1, tier: 1, price: 20 },
   w_sword:  { id: 'w_sword',  cat: 'w', name: 'Sword',       emoji: '⚔️', dmg: 5,  ap: 2, rng: 1, tier: 2, price: 30 },
   w_spear:  { id: 'w_spear',  cat: 'w', name: 'Spear',       emoji: '🔱', dmg: 5,  ap: 2, rng: 2, tier: 2, price: 34 },
@@ -40,6 +41,7 @@ export const POTIONS = {
 };
 
 // Active skills. Two can be equipped (edit loadout from the map, or pre-fight).
+// Weapon-based hits (attack, Power Strike, Whirlwind, Leap) crit from behind.
 // Costs are AP + MP; cd = cooldown in turns after casting. Ranges are chebyshev
 // (diagonals count). tgt: 'foe' tap an enemy in rng · 'tile' tap a tile ·
 // 'self'/'burst' cast instantly.
@@ -54,42 +56,49 @@ export const SKILLS = {
   sk_wall:  { id: 'sk_wall',  cat: 'k', name: 'Bulwark',      emoji: '🛡️', ap: 1, mp: 3, cd: 3, tgt: 'self',         fx: 'block', v: 12,   desc: 'Gain 12 block' },
   sk_nova:  { id: 'sk_nova',  cat: 'k', name: 'Frost Nova',   emoji: '🧊', ap: 2, mp: 5, cd: 4, tgt: 'burst', rng: 2, fx: 'nova',  v: 4,    desc: '4 damage + freeze foes within 2' },
   sk_venom: { id: 'sk_venom', cat: 'k', name: 'Venom Dart',   emoji: '☠️', ap: 1, mp: 3, cd: 2, tgt: 'foe',  rng: 4, fx: 'venom', v: 3,    desc: '3 damage + poison (3 dmg × 3 turns)' },
+  sk_snipe: { id: 'sk_snipe', cat: 'k', name: 'Long Shot',    emoji: '🎯', ap: 2, mp: 4, cd: 2, tgt: 'foe',  rng: 10, fx: 'dmg',  v: 8,    desc: '8 damage at range 10 — needs line of sight' },
+  sk_leap:  { id: 'sk_leap',  cat: 'k', name: 'Leap',         emoji: '🦘', ap: 2, mp: 3, cd: 3, tgt: 'tile', rng: 4, fx: 'leap',           desc: 'Jump within 4; weapon damage to foes where you land' },
+  sk_rtele: { id: 'sk_rtele', cat: 'k', name: 'Chaos Warp',   emoji: '🎲', ap: 1, mp: 2, cd: 4, tgt: 'self',         fx: 'rtele',          desc: 'Teleport somewhere random — no take-backs' },
+  sk_vanish:{ id: 'sk_vanish',cat: 'k', name: 'Vanish',       emoji: '🫥', ap: 1, mp: 5, cd: 5, tgt: 'self',         fx: 'vanish', v: 2,   desc: 'Unseen for 2 turns — attacking reveals you' },
+  sk_stalk: { id: 'sk_stalk', cat: 'k', name: 'Shadowstep',   emoji: '🥷', ap: 1, mp: 3, cd: 3, tgt: 'foe',  rng: 4, fx: 'stalk', noLos: 1, desc: 'Slip directly behind a foe — backstab from there' },
 };
 
 // Monster movesets are shown to the player via the inspect (❓) overlay.
 // move types: melee (adjacent), rng (ranged attack), guard (+block), rage (+atk once per fight).
+// sight: how far it sees (tiles, needs line of sight) — spotting you wakes it and
+// alerts it; rock and obstacles block sight, so cover is real.
 // Every foe rolls a 0-4 turn sleep timer at battle start (see combat.js).
 // psn: [dmg, turns] poisons the player when the hit lands.
 export const MONSTERS = {
-  m_rat:    { id: 'm_rat',    name: 'Giant Rat',      emoji: '🐀', hp: 13, ap: 3, def: 0, pool: 'easy',
+  m_rat:    { id: 'm_rat',    name: 'Giant Rat',      emoji: '🐀', hp: 13, ap: 3, def: 0, sight: 5, pool: 'easy',
     moves: [{ t: 'melee', name: 'Bite', emoji: '🦷', dmg: 5, ap: 2 }] },
-  m_bat:    { id: 'm_bat',    name: 'Cave Bat',       emoji: '🦇', hp: 10, ap: 4, def: 0, pool: 'easy',
+  m_bat:    { id: 'm_bat',    name: 'Cave Bat',       emoji: '🦇', hp: 10, ap: 4, def: 0, sight: 8, pool: 'easy',
     moves: [{ t: 'melee', name: 'Swoop', emoji: '🌬️', dmg: 4, ap: 2 }] },
-  m_slime:  { id: 'm_slime',  name: 'Slime',          emoji: '🦠', hp: 18, ap: 2, def: 1, pool: 'easy',
+  m_slime:  { id: 'm_slime',  name: 'Slime',          emoji: '🦠', hp: 18, ap: 2, def: 1, sight: 3, pool: 'easy',
     moves: [{ t: 'melee', name: 'Engulf', emoji: '💧', dmg: 6, ap: 2 }] },
-  m_gob:    { id: 'm_gob',    name: 'Goblin',         emoji: '👺', hp: 15, ap: 3, def: 0, pool: 'easy',
+  m_gob:    { id: 'm_gob',    name: 'Goblin',         emoji: '👺', hp: 15, ap: 3, def: 0, sight: 10, pool: 'easy',
     moves: [{ t: 'melee', name: 'Shiv', emoji: '🗡️', dmg: 5, ap: 2 }, { t: 'guard', name: 'Hide', emoji: '🛡️', block: 4, ap: 1 }] },
-  m_spider: { id: 'm_spider', name: 'Cave Spider',    emoji: '🕷️', hp: 11, ap: 3, def: 0, pool: 'easy',
+  m_spider: { id: 'm_spider', name: 'Cave Spider',    emoji: '🕷️', hp: 11, ap: 3, def: 0, sight: 7, pool: 'easy',
     moves: [{ t: 'melee', name: 'Venom Bite', emoji: '☠️', dmg: 3, ap: 2, psn: [2, 2] }] },
-  m_skel:   { id: 'm_skel',   name: 'Skeleton',       emoji: '💀', hp: 22, ap: 3, def: 1, pool: 'med',
+  m_skel:   { id: 'm_skel',   name: 'Skeleton',       emoji: '💀', hp: 22, ap: 3, def: 1, sight: 10, pool: 'med',
     moves: [{ t: 'melee', name: 'Slash', emoji: '⚔️', dmg: 7, ap: 2 }, { t: 'guard', name: 'Bone Wall', emoji: '🦴', block: 6, ap: 1 }] },
-  m_zomb:   { id: 'm_zomb',   name: 'Zombie',         emoji: '🧟', hp: 30, ap: 2, def: 0, pool: 'med',
+  m_zomb:   { id: 'm_zomb',   name: 'Zombie',         emoji: '🧟', hp: 30, ap: 2, def: 0, sight: 4, pool: 'med',
     moves: [{ t: 'melee', name: 'Rend', emoji: '🩸', dmg: 8, ap: 2 }] },
-  m_cult:   { id: 'm_cult',   name: 'Cultist',        emoji: '🧙', hp: 18, ap: 3, def: 0, pool: 'med',
+  m_cult:   { id: 'm_cult',   name: 'Cultist',        emoji: '🧙', hp: 18, ap: 3, def: 0, sight: 14, pool: 'med',
     moves: [{ t: 'rng', name: 'Hex Bolt', emoji: '🔮', dmg: 6, rng: 4, ap: 2 }, { t: 'rage', name: 'Dark Chant', emoji: '💢', atk: 2, ap: 2 }] },
-  m_viper:  { id: 'm_viper',  name: 'Pit Viper',      emoji: '🐍', hp: 16, ap: 4, def: 0, pool: 'med',
+  m_viper:  { id: 'm_viper',  name: 'Pit Viper',      emoji: '🐍', hp: 16, ap: 4, def: 0, sight: 6, pool: 'med',
     moves: [{ t: 'melee', name: 'Fang', emoji: '☠️', dmg: 4, ap: 2, psn: [2, 2] }] },
-  m_orc:    { id: 'm_orc',    name: 'Orc Brute',      emoji: '👹', hp: 26, ap: 3, def: 1, pool: 'med',
+  m_orc:    { id: 'm_orc',    name: 'Orc Brute',      emoji: '👹', hp: 26, ap: 3, def: 1, sight: 9, pool: 'med',
     moves: [{ t: 'melee', name: 'Cleave', emoji: '🪓', dmg: 9, ap: 2 }] },
-  m_ogre:   { id: 'm_ogre',   name: 'Ogre',           emoji: '🧌', hp: 38, ap: 3, def: 1, pool: 'elite',
+  m_ogre:   { id: 'm_ogre',   name: 'Ogre',           emoji: '🧌', hp: 38, ap: 3, def: 1, sight: 8, pool: 'elite',
     moves: [{ t: 'melee', name: 'Smash', emoji: '💥', dmg: 11, ap: 2 }, { t: 'rage', name: 'Fury', emoji: '💢', atk: 2, ap: 1 }] },
-  m_wraith: { id: 'm_wraith', name: 'Wraith',         emoji: '👻', hp: 30, ap: 4, def: 0, pool: 'elite',
+  m_wraith: { id: 'm_wraith', name: 'Wraith',         emoji: '👻', hp: 30, ap: 4, def: 0, sight: 18, pool: 'elite',
     moves: [{ t: 'rng', name: 'Soul Rip', emoji: '🌫️', dmg: 7, rng: 3, ap: 2 }] },
-  m_golem:  { id: 'm_golem',  name: 'Stone Golem',    emoji: '🗿', hp: 44, ap: 2, def: 2, pool: 'elite',
+  m_golem:  { id: 'm_golem',  name: 'Stone Golem',    emoji: '🗿', hp: 44, ap: 2, def: 2, sight: 5, pool: 'elite',
     moves: [{ t: 'melee', name: 'Slam', emoji: '🪨', dmg: 10, ap: 2 }, { t: 'guard', name: 'Harden', emoji: '🛡️', block: 8, ap: 1 }] },
-  m_whelp:  { id: 'm_whelp',  name: 'Dragon Whelp',   emoji: '🐲', hp: 13, ap: 3, def: 0, pool: 'minion',
+  m_whelp:  { id: 'm_whelp',  name: 'Dragon Whelp',   emoji: '🐲', hp: 13, ap: 3, def: 0, sight: 10, pool: 'minion',
     moves: [{ t: 'melee', name: 'Nip', emoji: '🦷', dmg: 5, ap: 2 }] },
-  m_dragon: { id: 'm_dragon', name: 'Ancient Dragon', emoji: '🐉', hp: 86, ap: 4, def: 2, pool: 'boss',
+  m_dragon: { id: 'm_dragon', name: 'Ancient Dragon', emoji: '🐉', hp: 86, ap: 4, def: 2, sight: 30, pool: 'boss',
     moves: [{ t: 'melee', name: 'Tail Swipe', emoji: '🌪️', dmg: 11, ap: 2 }, { t: 'rng', name: 'Fire Breath', emoji: '🔥', dmg: 8, rng: 3, ap: 2 }, { t: 'rage', name: 'Enrage', emoji: '💢', atk: 2, ap: 2 }] },
 };
 
@@ -111,6 +120,7 @@ export const RECIPES = [
   { out: 'a_chain',  scrap: 8 },  { out: 'a_plate', scrap: 12 }, { out: 'a_scale', scrap: 16 },
   { out: 'p_heal',   scrap: 7 },  { out: 'p_mana',  scrap: 5 },  { out: 'p_bomb',  scrap: 5 },  { out: 'p_tonic', scrap: 5 },
   { out: 'sk_blink', scrap: 9 },  { out: 'sk_whirl', scrap: 12 }, { out: 'sk_nova', scrap: 14 }, { out: 'sk_venom', scrap: 10 },
+  { out: 'sk_snipe', scrap: 12 }, { out: 'sk_leap', scrap: 10 },  { out: 'sk_rtele', scrap: 8 }, { out: 'sk_vanish', scrap: 14 }, { out: 'sk_stalk', scrap: 12 },
 ];
 
 export const NODE_EMOJI = {

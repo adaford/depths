@@ -1,48 +1,32 @@
-// Spatial helpers for HEX tactical boards. Pure functions over a G.combat-shaped
-// object — no game state of their own. Tiles are pointy-top hexes stored in
-// "odd-r" offset coordinates (x = column, y = row; odd rows shift right half a
-// hex). Movement is 1 AP per hex across 6 neighbors; ranges use hex distance.
+// Spatial helpers for SQUARE tactical boards. Pure functions over a G.combat-shaped
+// object — no game state of their own. Movement is 4-directional (1 AP per tile);
+// attack ranges and adjacency use chebyshev distance (diagonals count).
 // The map is solid rock with carved floors: `floors` (tile indexes, includes
 // dug-out tiles), `dug` (rubble flavor), `wallDmg` {idx: hp} for chipped rock.
-export const SQ3 = Math.sqrt(3);
+// Line of sight: a straight Bresenham line blocked by rock and by obstacles.
+export const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 export const inB = (c, x, y) => x >= 0 && x < c.w && y >= 0 && y < c.h;
 export const k = (x, y) => x + ',' + y;
 export const idx = (c, x, y) => y * c.w + x;
 
-// odd-r offset neighbor deltas, by row parity
-const N_EVEN = [[1, 0], [-1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1]];
-const N_ODD = [[1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [1, 1]];
 export function neighbors(x, y) {
-  const d = (y & 1) ? N_ODD : N_EVEN;
-  return d.map(([dx, dy]) => [x + dx, y + dy]);
+  return [[x + 1, y], [x - 1, y], [x, y - 1], [x, y + 1]];
 }
 
-// offset <-> axial <-> pixel
-export const toAxial = (x, y) => [x - ((y - (y & 1)) / 2), y];
-export const axialToOffset = (q, r) => [q + ((r - (r & 1)) / 2), r];
 export function dist(x1, y1, x2, y2) {
-  const [q1, r1] = toAxial(x1, y1), [q2, r2] = toAxial(x2, y2);
-  const dq = q1 - q2, dr = r1 - r2;
-  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+  return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
 }
-// center of hex (x,y) in board pixels (S = hex radius); margin S keeps row 0 on-canvas
-export function toPixel(x, y, S) {
-  return [SQ3 * S * (x + 0.5 * (y & 1)) + S, 1.5 * S * y + S];
+
+// center of tile (x,y) in board pixels (T = tile size)
+export function toPixel(x, y, T) {
+  return [x * T + T / 2, y * T + T / 2];
 }
-export function fromPixel(px, py, S) {
-  const lx = px - S, ly = py - S;
-  const q = (SQ3 / 3 * lx - ly / 3) / S;
-  const r = (2 / 3 * ly) / S;
-  // cube round
-  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(-q - r);
-  const dq = Math.abs(rq - q), dr2 = Math.abs(rr - r), ds = Math.abs(rs - (-q - r));
-  if (dq > dr2 && dq > ds) rq = -rr - rs;
-  else if (dr2 > ds) rr = -rq - rs;
-  return [rq + ((rr - (rr & 1)) / 2), rr];
+export function fromPixel(px, py, T) {
+  return [Math.floor(px / T), Math.floor(py / T)];
 }
-export function boardPx(c, S) {
-  return [SQ3 * S * (c.w + 0.5) + S, 1.5 * S * (c.h - 1) + 2 * S + S];
+export function boardPx(c, T) {
+  return [c.w * T, c.h * T];
 }
 
 export function floorSet(c) { return new Set(c.floors); }
@@ -58,6 +42,29 @@ export function foeAt(c, x, y) { return c.foes.find(f => !f.dead && f.x === x &&
 export function open(c, x, y) {
   return isFloor(c, x, y) && !obsAt(c, x, y) && !chestAt(c, x, y) &&
     !foeAt(c, x, y) && !(c.px === x && c.py === y);
+}
+
+// Line of sight from (x1,y1) to (x2,y2): Bresenham, blocked by rock and obstacles
+// on the tiles BETWEEN the endpoints. Pass shared sets when calling in a loop.
+export function hasLoS(c, x1, y1, x2, y2, fs, obsSet) {
+  fs = fs || floorSet(c);
+  if (!obsSet) {
+    obsSet = new Set();
+    for (const o of c.obs) obsSet.add(idx(c, o.x, o.y));
+  }
+  let x = x1, y = y1;
+  const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
+  const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+  let err = dx - dy;
+  for (;;) {
+    if (x === x2 && y === y2) return true;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+    if (x === x2 && y === y2) return true;
+    const i = y * c.w + x;
+    if (!fs.has(i) || obsSet.has(i)) return false;
+  }
 }
 
 function occSet(c) {
