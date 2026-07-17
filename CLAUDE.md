@@ -48,7 +48,9 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
   (moves free, `EXPLORE_STEPS` stride, foe compass) and the AP economy starts
   on engagement (with `CHASE_R` pursuit hysteresis — no free-move kiting).
   Every foe has a per-type `sight` range (data.js): seeing the player (hex
-  distance ≤ sight AND clear LoS — rock and obstacles block sight) wakes and
+  distance ≤ sight AND clear LoS — rock and TALL obstacles block sight; `low`
+  obstacles like 🪨 rocks and ⚱️ urns only block movement, and obstacles often
+  spawn in multi-tile formations) wakes and
   alerts it; every foe also rolls a 0-4 turn sleep timer that ticks during
   enemy phases; damage wakes instantly. RANGED attacks both ways require LoS.
   Every foe has a `face` direction (rendered as a dot): weapon hits from

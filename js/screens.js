@@ -355,7 +355,7 @@ function combat(t) {
   for (const o of c.obs) {
     const [sx, sy] = scr(o.x, o.y);
     if (!onScreen(sx, sy)) continue;
-    U.emo(o.e, sx, sy, 26 * K);
+    U.emo(o.e, sx, sy, (o.low ? 20 : 26) * K); // low obstacles read small — you see over them
     if (o.hp < o.mhp) U.bar(sx - 18 * K, sy + 14 * K, 36 * K, 5, o.hp / o.mhp, '#8a6f3a');
     if (stSet.has(k(o.x, o.y))) ring(sx, sy, 'rgba(255,107,94,0.75)', 2, 4);
   }

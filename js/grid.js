@@ -44,14 +44,19 @@ export function open(c, x, y) {
     !foeAt(c, x, y) && !(c.px === x && c.py === y);
 }
 
-// Line of sight from (x1,y1) to (x2,y2): Bresenham, blocked by rock and obstacles
-// on the tiles BETWEEN the endpoints. Pass shared sets when calling in a loop.
+// Obstacles that block line of sight — low ones (rocks, urns) don't: you can
+// see and shoot over them, they only block movement.
+export function sightBlockSet(c) {
+  const s = new Set();
+  for (const o of c.obs) if (!o.low) s.add(idx(c, o.x, o.y));
+  return s;
+}
+
+// Line of sight from (x1,y1) to (x2,y2): Bresenham, blocked by rock and TALL
+// obstacles on the tiles BETWEEN the endpoints. Pass shared sets in loops.
 export function hasLoS(c, x1, y1, x2, y2, fs, obsSet) {
   fs = fs || floorSet(c);
-  if (!obsSet) {
-    obsSet = new Set();
-    for (const o of c.obs) obsSet.add(idx(c, o.x, o.y));
-  }
+  if (!obsSet) obsSet = sightBlockSet(c);
   let x = x1, y = y1;
   const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
   const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;

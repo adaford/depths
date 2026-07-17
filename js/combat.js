@@ -280,21 +280,60 @@ export function startCombat(kind, row) {
   const obs = [];
   const chests = [];
   const staticBlocked = () => new Set([...obs, ...chests].map(o => o.y * d.w + o.x));
-  const keepsConnected = (x, y) => {
+  const keepsConnected = (cells) => {
     const blocked = staticBlocked();
-    blocked.add(y * d.w + x);
+    for (const [x, y] of cells) blocked.add(y * d.w + x);
     const startI = pxy.y * d.w + pxy.x;
     if (blocked.has(startI)) return false;
     return flood(d.w, d.h, d.floors, blocked, startI).size === d.floors.size - blocked.size;
   };
-  // obstacles mostly stand inside rooms: cover that blocks sight and shots
-  const nObs = chance(r, 0.12) ? 0 : ri(r, 4, Math.min(20, 5 + Math.floor(area / 35)));
-  for (let i = 0; i < nObs; i++) {
-    const p = (chance(r, 0.7) ? takeFrom(farFrom(roomFloor, 2)) : null) || takeFrom(farFrom(all, 2));
-    if (!p) break;
-    if (!keepsConnected(p.x, p.y)) continue;
-    const ot = pick(r, OBSTACLES);
-    obs.push({ x: p.x, y: p.y, hp: ot.hp, mhp: ot.hp, e: ot.e });
+  const wpick = (items, wOf) => {
+    let tot = 0;
+    for (const it of items) tot += wOf(it);
+    let x = rnd(r) * tot;
+    for (const it of items) {
+      x -= wOf(it);
+      if (x <= 0) return it;
+    }
+    return items[items.length - 1];
+  };
+  // obstacles: lots of them, mostly inside rooms, often in formations (dominoes,
+  // short walls, L-corners, 2x2 blocks and bigger). Low types (rocks, urns) only
+  // block the path; tall types are true cover that blocks sight.
+  const SHAPES = [
+    { w: 46, c: [[0, 0]] },
+    { w: 7,  c: [[0, 0], [1, 0]] },
+    { w: 7,  c: [[0, 0], [0, 1]] },
+    { w: 5,  c: [[0, 0], [1, 0], [2, 0]] },
+    { w: 5,  c: [[0, 0], [0, 1], [0, 2]] },
+    { w: 5,  c: [[0, 0], [1, 0], [0, 1]] },
+    { w: 5,  c: [[0, 0], [1, 0], [1, 1]] },
+    { w: 12, c: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+    { w: 5,  c: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]] },
+    { w: 3,  c: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [2, 2]] },
+  ];
+  const nObs = chance(r, 0.08) ? ri(r, 4, 10) : ri(r, 18, Math.min(64, 14 + Math.floor(area / 13)));
+  let oPlaced = 0, oGuard = nObs * 14;
+  const cellOK = ([x, y]) => d.floors.has(y * d.w + x) && !used.has(Gr.k(x, y)) && Gr.dist(x, y, pxy.x, pxy.y) >= 2;
+  while (oPlaced < nObs && oGuard-- > 0) {
+    const shape = wpick(SHAPES, (s) => s.w).c;
+    const pool = chance(r, 0.7) ? roomFloor : all;
+    const free = pool.filter(cellOK);
+    if (!free.length) break;
+    const [ax, ay] = pick(r, free);
+    const cells = shape.map(([dx, dy]) => [ax + dx, ay + dy]);
+    let place = null;
+    if (cells.every(cellOK) && keepsConnected(cells)) place = cells;
+    else if (keepsConnected([[ax, ay]])) place = [[ax, ay]]; // formation didn't fit — drop a single instead
+    if (!place) continue;
+    const ot = wpick(OBSTACLES, (o) => o.w); // one type per formation — reads as a structure
+    for (const [x, y] of place) {
+      used.add(Gr.k(x, y));
+      const ob = { x, y, hp: ot.hp, mhp: ot.hp, e: ot.e };
+      if (ot.low) ob.low = 1;
+      obs.push(ob);
+      oPlaced++;
+    }
   }
   const traps = [];
   const addTrap = (p) => {
@@ -309,7 +348,7 @@ export function startCombat(kind, row) {
   for (let i = 0; i < nChests; i++) {
     const p = takeFrom(farFrom(all, 4));
     if (!p) break;
-    if (!keepsConnected(p.x, p.y)) continue;
+    if (!keepsConnected([[p.x, p.y]])) continue;
     chests.push({ x: p.x, y: p.y, opened: false });
     if (chance(r, 0.5)) { // guarded loot: spikes beside the chest
       const spots = Gr.neighbors(p.x, p.y).filter(([nx, ny]) => d.floors.has(ny * d.w + nx));
@@ -464,7 +503,7 @@ function wakeScan() {
   if (c.pInvis > 0) return 0;
   const wasEngaged = isEngaged();
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   let woke = 0;
   for (const f of c.foes) {
     if (f.dead || f.awake) continue;
@@ -756,7 +795,7 @@ function skillTargetsRaw(sk) {
   const c = C();
   const out = [];
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   for (let i = 0; i < c.foes.length; i++) {
     const f = c.foes[i];
     if (f.dead || Gr.dist(c.px, c.py, f.x, f.y) > sk.rng) continue;
@@ -976,7 +1015,7 @@ export function atkTargets() {
   const w = getPrimary();
   if (!c || c.phase !== 'player' || c.ap < w.ap) return [];
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   return c.foes.map((f, i) => i).filter(i => {
     const f = c.foes[i];
     if (f.dead || Gr.dist(c.px, c.py, f.x, f.y) > w.rng) return false;
@@ -992,7 +1031,7 @@ export function bombTargets() {
   const id = G.player.potions[c.potIdx];
   if (!id) return [];
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   return c.foes.map((f, i) => i).filter(i => {
     const f = c.foes[i];
     return !f.dead && Gr.dist(c.px, c.py, f.x, f.y) <= POTIONS[id].rng &&
@@ -1015,7 +1054,7 @@ export function foeSightField(i) {
   if (!f || f.dead) return new Set();
   const m = MONSTERS[f.mid];
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   const out = new Set();
   for (let y = Math.max(0, f.y - m.sight); y <= Math.min(c.h - 1, f.y + m.sight); y++) {
     for (let x = Math.max(0, f.x - m.sight); x <= Math.min(c.w - 1, f.x + m.sight); x++) {
@@ -1034,7 +1073,7 @@ export function foeThreatens(i, budget, rmap) {
   if (!f || f.dead || f.stun > 0 || c.pInvis > 0) return false;
   const m = MONSTERS[f.mid];
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   const canHitFrom = (x, y, mv) => {
     const rng = mv.t === 'melee' ? 1 : mv.rng;
     if (Gr.dist(x, y, c.px, c.py) > rng) return false;
@@ -1130,7 +1169,7 @@ function foeAttack(c, f, m, mv) {
 function enemyMicro() {
   const c = C();
   const fs = Gr.floorSet(c);
-  const obsSet = new Set(c.obs.map(o => o.y * c.w + o.x));
+  const obsSet = Gr.sightBlockSet(c);
   for (;;) {
     while (c.ei < c.foes.length && c.foes[c.ei].dead) { c.ei++; c.eap = -1; }
     if (c.ei >= c.foes.length) { startPlayerTurn(); return; }

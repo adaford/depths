@@ -4,7 +4,9 @@ Climb 10 floors of a heavily branching dungeon. Choose your path (fights,
 ❓ events, treasure, merchants), then stalk dense grid dungeons — every
 battle-map is a freshly generated labyrinth of cramped halls, chokepoint
 corridors, and caves, crawling with packed dens, spike traps at the corridor
-mouths, and cover that blocks LINE OF SIGHT. Every enemy has its own sight
+mouths, and rubble everywhere — low rocks you can shoot over but not walk
+through, and tall cover (in walls, 2x2 blocks, and bigger formations) that
+blocks LINE OF SIGHT. Every enemy has its own sight
 range (a slime barely sees 3 tiles; the dragon sees 30) and a facing — sneak
 around cover, strike from behind for CRIT damage (daggers hit 3x), or Vanish
 and walk right past. Scout before you commit: scroll and pinch-zoom the map,

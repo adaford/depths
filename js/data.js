@@ -118,12 +118,16 @@ export const MONSTERS = {
     moves: [{ t: 'melee', name: 'Tail Swipe', emoji: '🌪️', dmg: 11, ap: 2 }, { t: 'rng', name: 'Fire Breath', emoji: '🔥', dmg: 8, rng: 3, ap: 2 }, { t: 'rage', name: 'Enrage', emoji: '💢', atk: 2, ap: 2 }] },
 };
 
-// Destructible cover placed by the dungeon generator. Blocks movement AND line
-// of sight (shots and enemy eyes) until smashed. Shown in the inspect panel.
+// Destructible obstacles placed by the dungeon generator — often in formations
+// (2x2 blocks, short walls, L-shapes). ALL of them block movement; only TALL
+// ones also block line of sight. `low: 1` = see and shoot right over it.
+// w = placement weight. Shown in the inspect panel.
 export const OBSTACLES = [
-  { e: '🪨', hp: 10, name: 'Boulder',  desc: 'Heavy cover — blocks paths, shots, and enemy eyes until smashed.' },
-  { e: '🪵', hp: 6,  name: 'Log Pile', desc: 'Stacked timber — blocks the way and hides you from view.' },
-  { e: '⚱️', hp: 4,  name: 'Old Urn',  desc: 'Blocks the way. Might hold coins — smash it and see.' },
+  { e: '🪨', hp: 8,  w: 35, low: 1, name: 'Rocks',       desc: 'A low heap of stone — blocks the way, but you can see and shoot over it.' },
+  { e: '⚱️', hp: 4,  w: 14, low: 1, name: 'Old Urn',     desc: 'Squat and heavy — blocks the way, easy to see over. Might hold coins.' },
+  { e: '🪦', hp: 12, w: 16, name: 'Stone Slab',  desc: 'A leaning slab — blocks paths, shots, and enemy eyes until smashed.' },
+  { e: '🪵', hp: 6,  w: 20, name: 'Log Pile',    desc: 'Stacked timber — blocks the way and hides you from view.' },
+  { e: '🍄', hp: 5,  w: 15, name: 'Cave Fungus', desc: 'A towering mushroom — blocks the way and blocks sight.' },
 ];
 
 // What each pool drops on death. Every foe drops one piece of gear (tier ~ pool tier).
