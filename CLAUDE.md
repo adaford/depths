@@ -8,6 +8,10 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
 - Local test: `serve.bat` / `python -m http.server 8000` (phone uses PC's LAN IP).
 - Deploy: commit and push to `main` → GitHub Pages updates in ~1 minute at
   https://adaford.github.io/depths/
+- **ALWAYS deploy every verified change round to `main`** — the owner playtests
+  exclusively on the live GitHub Pages build from their phone; work sitting on
+  an unmerged branch is invisible to them. Verify (smoke + browser check),
+  then merge and confirm it's live — don't wait to be asked.
 - Before pushing gameplay changes, run `node test/smoke.mjs` (simulates 300 runs,
   checks invariants, prints win-rate — keep win-rate roughly in the 15–45% band
   when tuning).
