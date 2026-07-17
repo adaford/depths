@@ -17,6 +17,9 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
   are in logical units.
 - Immediate-mode UI: every frame redraws and re-registers tap regions via
   `U.button`/`U.hit`. No DOM elements, no event listeners per widget.
+  Text must never leave the canvas: pass `maxW` to `U.txt` (shrink-then-ellipsize)
+  or use `U.wrap` for descriptions. Draw emoji with `U.emo` — it centers the
+  measured ink bounds on the point (baseline `middle` sits emoji off-center).
 - `G` in `js/game.js` is the whole game state and must stay JSON-serializable —
   it is persisted verbatim to localStorage (`depths_save_7`). No class instances,
   functions, or absolute timestamps inside `G` (relative `_due` is reset on load).
@@ -31,8 +34,13 @@ ES modules on a single canvas. **No build step, no dependencies, no TypeScript**
   conversion, BFS, Bresenham line of sight) goes through `js/grid.js`; never
   hand-roll dx/dy math. The board is solid rock with carved floors: `c.floors`
   is the walkable list, `c.wallDmg` tracks chipped rock, digging pushes into
-  `floors` + `dug`. Fights open in a `prep` scout phase (look around, inspect
-  foes, swap build); while no awake foe is within `ENGAGE_R` you EXPLORE
+  `floors` + `dug`. Tapping ANYTHING on the board inspects it (`c.sel` for foes,
+  `c.insp` for obstacles/traps/chests/items/rock): foes show walk range + sight
+  field + a stat/moveset panel over the board bottom, objects show a description
+  panel whose button carries the action (Open / Smash / Dig / Go grab) — plain
+  taps never trigger actions on objects. Fights open in a `prep` scout phase
+  (look around, inspect, swap build); while no awake foe is within `ENGAGE_R`
+  you EXPLORE
   (moves free, `EXPLORE_STEPS` stride, foe compass) and the AP economy starts
   on engagement (with `CHASE_R` pursuit hysteresis — no free-move kiting).
   Every foe has a per-type `sight` range (data.js): seeing the player (hex
