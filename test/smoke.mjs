@@ -11,7 +11,7 @@ import {
 import {
   tick, moveTo, attackFoe, castSkill, defend, endTurn, usePotion, throwBomb,
   openChestAt, atkTargets, skillTargets, skillFor, skillIssue, beginBattle,
-  isEngaged, EXPLORE_STEPS,
+  isEngaged, EXPLORE_STEPS, bombTargets, setMode,
 } from '../js/combat.js';
 import { WEAPONS, OFFHANDS, ARMOR, SKILLS, RECIPES, getItem } from '../js/data.js';
 import { dist, k, pathToward, stepToward } from '../js/grid.js';
@@ -151,7 +151,7 @@ function playCombat() {
       if (P.hp <= P.maxHp * 0.55) { castSkill(slot); return; }
       continue;
     }
-    if (sk.fx === 'block' || sk.fx === 'blink' || sk.fx === 'shove') continue; // situational, skip
+    if (['block', 'blink', 'shove', 'leap', 'rtele', 'vanish', 'stalk'].includes(sk.fx)) continue; // situational, skip
     if (sk.tgt === 'burst') {
       if (foes.filter(x => dd(x.f) <= sk.rng).length >= 2) { castSkill(slot); return; }
       continue;
@@ -174,11 +174,14 @@ function playCombat() {
     return;
   }
 
-  // bomb a distant foe if we can't reach anyone
+  // bomb a foe if one is in range AND sight (the engine list is LoS-aware)
   if (pi('p_bomb') >= 0 && c.ap >= 1 && foes.some(x => dd(x.f) <= 3)) {
     usePotion(pi('p_bomb'));
-    const bt = foes.filter(x => dd(x.f) <= 3);
-    if (bt.length && c.mode === 'bomb') { throwBomb(bt[0].i); return; }
+    if (c.mode === 'bomb') {
+      const bt = bombTargets();
+      if (bt.length) { throwBomb(bt[0]); return; }
+      setMode('move'); // nothing visible — put the bomb away and do something else
+    }
   }
 
   // open an adjacent chest (free value)
